@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "integer", "enum": [1] },
+    "monitoringEnabled": { "type": "boolean" },
+    "behaviorEnabled": { "type": "boolean" },
+    "policyMode": { "type": "string", "enum": ["monitor", "warn", "block"] },
+    "sensitiveDomains": { "type": "array", "items": { "type": "string" } },
+    "minimumConfidence": { "type": "number" },
+    "retentionDays": { "type": "integer" },
+    "maxAuditEvents": { "type": "integer" },
+    "sessionRetentionDays": { "type": "integer" },
+    "maxHistorySessions": { "type": "integer" }
+  }
+}

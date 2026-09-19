@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "phase": 5,
+  "phaseName": "Passive debugger intelligence",
+  "status": "in_progress",
+  "lastCompletedMilestone": "Phase4 typecheck314unit tests16files build and all8browser scenarios pass including fullbrowser restart",
+  "currentTask": "Implement passive debugger target lifecycle records using existing shared snapshots; threat model completed",
+  "nextTask": "Wire debugger history into worker/dashboard/coverage UI, validate tests, then versioned runtime fingerprint registry",
+  "filesInProgress": ["src/content/sensor.ts", "src/background/sensor-messages.ts", "src/background/worker.ts", "src/background/monitor.ts", "src/manifest.ts", "vite.config.ts", "src/ui/popup.tsx", "src/ui/options.tsx", "tests/ui.test.tsx", "tests/worker.test.ts", "tests/e2e/extension.spec.ts", "src/background/agent-sessions.ts", "tests/agent-sessions.test.ts"],
+  "tests": { "typecheck": "phase4_pass", "unit": "phase4_314_pass_16files", "build": "phase4_pass", "e2e": "phase4_8_pass_34.4s", "package": "baseline_passed_only" },
+  "knownIssues": ["Sensor activity/correlation and phases5+ remain incomplete; do not claim entireproductdone", "Git HEAD is unborn; preserve existing intent-to-add files", "Use explicit current repo workdir and Node 24 PATH"],
+  "requirementsFile": "docs/PRODUCT_REQUIREMENTS.md",
+  "updatedAt": "2026-09-19"
+}
