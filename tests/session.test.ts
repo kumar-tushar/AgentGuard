@@ -77,7 +77,7 @@ describe('SessionStore', () => {
     expect(store.tabs.get(1)).toEqual(detected);
   });
 
-  it('rejects older NO_AUTOMATION_OBSERVED snapshots without debugger coverage while preserving fully supported snapshots', async () => {
+  it.each(['debugger', 'fingerprint'] as const)('rejects older NO_AUTOMATION_OBSERVED snapshots without %s coverage while preserving fully supported snapshots', async missing => {
     const assessment = await assess({
       now: 100, runtime: { webdriver: false, fingerprints: [] }, debuggerAttached: false,
       runtimeReason: 'Runtime checked', debuggerReason: 'Attachment checked',
@@ -87,8 +87,8 @@ describe('SessionStore', () => {
     expect(assessment.status).toBe('NO_AUTOMATION_OBSERVED');
     const supported: TabAgentStatus = { ...status(1), ...assessment };
     const legacy: TabAgentStatus = { ...supported, tabId: 2,
-      coverage: supported.coverage.map(item => item.detector === 'debugger'
-        ? { ...item, availability: 'unavailable', reason: 'Debugger unavailable' } : item),
+      coverage: supported.coverage.map(item => item.detector === missing
+        ? { ...item, availability: 'unavailable', reason: 'Inspection unavailable' } : item),
     };
     const store = new SessionStore({ async read() { return { tabs: { 1: supported, 2: legacy } }; }, async write() {} });
     await store.load(new Set([1, 2]));

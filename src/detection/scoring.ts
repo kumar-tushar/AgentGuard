@@ -29,7 +29,8 @@ export function scoreAssessment(
   const risk = Math.min(0.99, Math.max(0, Math.round(combined * 10_000) / 10_000));
   const webdriver = automation.some(item => item.detector === 'webdriver' && item.metadata.webdriver === true && item.confidence >= 0.8);
   const debuggerAttached = automation.some(item => item.detector === 'debugger' && item.metadata.attached === true && item.confidence >= 0.35);
-  const runtimeAvailable = coverage.some(item => item.detector === 'webdriver' && item.availability === 'available');
+  const runtimeAvailable = ['webdriver', 'fingerprint'].every(detector =>
+    coverage.some(item => item.detector === detector && item.availability === 'available'));
   const debuggerAvailable = coverage.some(item => item.detector === 'debugger' && item.availability === 'available');
 
   let status: TabState = 'UNMONITORED';

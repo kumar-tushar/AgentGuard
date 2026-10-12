@@ -218,6 +218,21 @@ describe('passive debugger target intelligence', () => {
     expect(denied.snapshot()).toMatchObject({ coverageAvailable: false, targets: [{ disappearedAt: null, currentAttached: null }] });
   });
 
+  it('applies newer coverage loss even when an earlier snapshot and all retries cannot be persisted', async () => {
+    let now = START;
+    const { port } = memory();
+    const store = new DebuggerIntelligenceStore(port, { now: () => now });
+    port.write.mockRejectedValue(new Error('Storage unavailable'));
+    await expect(store.reconcile(capture(), domains)).rejects.toThrow('Storage unavailable');
+    now++;
+    await expect(store.reconcile(capture(now, [], false), domains)).rejects.toThrow('Storage unavailable');
+    expect(store.snapshot()).toMatchObject({ coverageAvailable: false, lastCapturedAt: now,
+      targets: [{ attached: true, currentAttached: null, lastSeen: START, disappearedAt: null }] });
+    port.write.mockResolvedValue(undefined);
+    await store.reconcile(capture(now, [], false), domains);
+    expect(port.write).toHaveBeenLastCalledWith(expect.objectContaining({ coverageAvailable: false, lastCapturedAt: now }));
+  });
+
   it.each([
     { id: 'https://example.com/private' }, { id: 'x'.repeat(129) }, { id: '' },
     { type: 'PRIVATE_UNKNOWN_KIND' }, { tabId: -1 }, { tabId: 2_147_483_648 }, { attached: 'true' },

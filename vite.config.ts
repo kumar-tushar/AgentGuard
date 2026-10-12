@@ -12,7 +12,10 @@ export default defineConfig({
       this.emitFile({ type: 'asset', fileName: 'manifest.json', source: JSON.stringify(createManifest(), null, 2) });
       // Manifest content scripts are classic scripts, not shared ESM chunks.
       this.emitFile({ type: 'asset', fileName: 'sensor.js', source: `(${installSensor.toString()})();` });
-      for (const size of [16, 32, 48, 128]) this.emitFile({ type: 'asset', fileName: `icons/icon-${size}.png`, source: createIcon(size) });
+      for (const size of [16, 32, 48, 128]) {
+        this.emitFile({ type: 'asset', fileName: `icons/icon-${size}.png`, source: createIcon(size) });
+        this.emitFile({ type: 'asset', fileName: `icons/icon-alert-${size}.png`, source: createIcon(size, 'alert') });
+      }
     },
   }],
   base: './',

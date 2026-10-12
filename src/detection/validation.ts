@@ -1,11 +1,5 @@
 import type { BehaviorSnapshot, DetectionContext, Fingerprint, RuntimeSnapshot } from '../shared/contracts';
-
-const fingerprints: readonly Fingerprint[] = [
-  'playwright-binding',
-  'playwright-init',
-  'selenium-global',
-  'webdriver-global',
-];
+import { FINGERPRINT_PROBES, fingerprintDefinition } from '../shared/fingerprints';
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -29,8 +23,9 @@ export function normalizeRuntimeSnapshot(value: unknown): RuntimeSnapshot | null
     const webdriver = raw.webdriver;
     const markers = raw.fingerprints;
     if (webdriver !== null && typeof webdriver !== 'boolean') return null;
-    if (!Array.isArray(markers) || markers.length > fingerprints.length) return null;
-    if (!markers.every(marker => typeof marker === 'string' && fingerprints.includes(marker as Fingerprint))) return null;
+    if (markers === null) return { webdriver, fingerprints: null };
+    if (!Array.isArray(markers) || markers.length > FINGERPRINT_PROBES.length) return null;
+    if (!markers.every(marker => fingerprintDefinition(marker) !== undefined)) return null;
     if (new Set(markers).size !== markers.length) return null;
     return { webdriver, fingerprints: [...markers] as Fingerprint[] };
   } catch {

@@ -5,6 +5,7 @@ import {
   type ActivityCounters, type Framework, type IntelligenceObservation, type Transport,
 } from '../shared/intelligence';
 import { SESSION_EVIDENCE_IDS } from './agent-sessions';
+import { fingerprintDefinition } from '../shared/fingerprints';
 
 export interface SessionActivity {
   /** Document-bound deltas supplied by the worker, never rolling totals from detector evidence. */
@@ -13,10 +14,6 @@ export interface SessionActivity {
 }
 
 const DETECTOR_FAMILIES = { webdriver: 'runtime', debugger: 'debugger', fingerprint: 'runtime', behavior: 'behavior' } as const;
-const MARKER_FRAMEWORKS: Readonly<Record<string, Framework>> = {
-  'playwright-binding': 'Playwright-like', 'playwright-init': 'Playwright-like',
-  'selenium-global': 'Selenium-like', 'webdriver-global': 'WebDriver-compatible',
-};
 type EvidenceId = typeof SESSION_EVIDENCE_IDS[number];
 
 function invalid(): never { throw new Error('Invalid session observation source'); }
@@ -47,7 +44,7 @@ function evidenceId(evidence: DetectionEvidence, assessedAt: number): EvidenceId
     id = 'debugger:attached';
     keys = ['signal', 'attached'];
   } else if (evidence.detector === 'fingerprint' && metadata.signal === 'automation-indicator' &&
-      typeof metadata.marker === 'string' && Object.hasOwn(MARKER_FRAMEWORKS, metadata.marker)) {
+      fingerprintDefinition(metadata.marker)) {
     id = `fingerprint:${metadata.marker}`;
     keys = ['signal', 'marker'];
   } else if (evidence.detector === 'behavior') {
@@ -97,7 +94,7 @@ export function toSessionObservation(status: Readonly<TabAgentStatus>, activity:
     if (id === 'webdriver:webdriver') transports.add('WebDriver');
     if (id === 'debugger:attached') transports.add('CDP');
     if (evidence.detector === 'fingerprint') {
-      const framework = MARKER_FRAMEWORKS[String(evidence.metadata.marker)];
+      const framework = fingerprintDefinition(evidence.metadata.marker)?.framework;
       if (!framework) return invalid();
       frameworks.add(framework);
       frameworkEvidence.add(id);

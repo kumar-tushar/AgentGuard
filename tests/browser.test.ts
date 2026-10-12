@@ -198,24 +198,45 @@ describe('passive debugger access and reduced coverage', () => {
   });
 });
 
-describe('control-state badges', () => {
-  it('labels every state without asserting human control or safety', async () => {
+describe('icon-only toolbar states', () => {
+  it('clears all text overlays while preserving qualified tooltips and icon colors', async () => {
     const setBadgeText = vi.fn();
     const setTitle = vi.fn();
-    vi.stubGlobal('chrome', { action: { setBadgeText, setTitle, setBadgeBackgroundColor: vi.fn() } });
+    const setIcon = vi.fn();
+    vi.stubGlobal('chrome', { action: { setBadgeText, setTitle, setIcon, setBadgeBackgroundColor: vi.fn() } });
     const adapter = await import('../src/background/browser');
     const labels = ['Agent active', 'Agent connected', 'Automation likely', 'Automation suspected', 'No automation observed', 'Unmonitored'];
-    const texts = ['ACT', 'CONN', 'AUTO', '?', '·', '—'];
     for (const [index, state] of CONTROL_STATES.entries()) {
       await adapter.updateBadge(7, state);
-      expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: texts[index] });
+      expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: '' });
+      const icon = index < 4 ? 'icon-alert' : 'icon';
+      expect(setIcon).toHaveBeenLastCalledWith({ tabId: 7, path: { 16: `icons/${icon}-16.png`, 32: `icons/${icon}-32.png` } });
       expect(setTitle).toHaveBeenLastCalledWith({ tabId: 7, title: `AgentGuard · Last assessment: ${labels[index]} · Open for current evidence and limitations` });
     }
     expect(JSON.stringify(setTitle.mock.calls)).not.toMatch(/human|safe/i);
     await adapter.updateBadge(7, 'AGENT_ACTIVE', false, 'warn');
-    expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: 'WARN' });
+    expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: '' });
     await adapter.updateBadge(7, 'AGENT_CONNECTED', true, 'warn');
-    expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: 'STOP' });
+    expect(setBadgeText).toHaveBeenLastCalledWith({ tabId: 7, text: '' });
     expect(setTitle).toHaveBeenLastCalledWith({ tabId: 7, title: 'AgentGuard · Quarantine requested · Open to verify containment' });
+  });
+
+  it('restores neutral icons per tab after automation or policy warnings end', async () => {
+    const setIcon = vi.fn();
+    vi.stubGlobal('chrome', { action: { setIcon, setBadgeText: vi.fn(), setTitle: vi.fn(), setBadgeBackgroundColor: vi.fn() } });
+    const adapter = await import('../src/background/browser');
+    const alert = { 16: 'icons/icon-alert-16.png', 32: 'icons/icon-alert-32.png' };
+    const neutral = { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' };
+    await adapter.updateBadge(7, 'AUTOMATION_SUSPECTED');
+    await adapter.updateBadge(8, 'NO_AUTOMATION_OBSERVED');
+    await adapter.updateBadge(7, 'UNMONITORED');
+    await adapter.updateBadge(8, 'NO_AUTOMATION_OBSERVED', false, 'warn');
+    await adapter.updateBadge(8, 'NO_AUTOMATION_OBSERVED');
+    await adapter.updateBadge(7, 'UNMONITORED', true);
+    await adapter.updateBadge(7, 'NO_AUTOMATION_OBSERVED');
+    expect(setIcon.mock.calls).toEqual([
+      [{ tabId: 7, path: alert }], [{ tabId: 8, path: neutral }], [{ tabId: 7, path: neutral }],
+      [{ tabId: 8, path: alert }], [{ tabId: 8, path: neutral }], [{ tabId: 7, path: alert }], [{ tabId: 7, path: neutral }],
+    ]);
   });
 });

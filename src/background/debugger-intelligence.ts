@@ -85,10 +85,7 @@ export class DebuggerIntelligenceStore {
     return now;
   }
   private serialize(work: () => Promise<void>): Promise<void> {
-    const operation = this.queue.then(async () => {
-      if (this.dirty) await this.persist();
-      await work();
-    });
+    const operation = this.queue.then(work);
     this.queue = operation.catch(() => undefined);
     return operation;
   }
@@ -100,6 +97,7 @@ export class DebuggerIntelligenceStore {
 
   load(): Promise<void> {
     return this.serialize(async () => {
+      if (this.dirty) await this.persist();
       this.data = parseDebuggerIntelligence(await this.port.read(), this.now()) ?? empty();
     });
   }
@@ -124,7 +122,10 @@ export class DebuggerIntelligenceStore {
     }
     return this.serialize(async () => {
       if (capturedAt > this.now()) throw new Error('Future debugger snapshot');
-      if (this.data.lastCapturedAt !== null && capturedAt <= this.data.lastCapturedAt) return;
+      if (this.data.lastCapturedAt !== null && capturedAt <= this.data.lastCapturedAt) {
+        if (this.dirty) await this.persist();
+        return;
+      }
       const next = structuredClone(this.data);
       const previousCoverage = next.coverageAvailable;
       const records = new Map(next.targets.map(target => [target.targetId, target]));
@@ -160,6 +161,8 @@ export class DebuggerIntelligenceStore {
       next.lastCapturedAt = capturedAt;
       // Prefer the newest live targets over disappeared history; stable ties preserve source order.
       next.targets = [...records.values()].sort((left, right) => Number(left.disappearedAt !== null) - Number(right.disappearedAt !== null) || right.lastSeen - left.lastSeen).slice(0, MAX_DEBUGGER_TARGETS);
+      // A failed older write must never block newer coverage loss in the live view.
+      // Persist the latest complete snapshot; duplicate captures retry a dirty write.
       this.data = next;
       await this.persist();
     });

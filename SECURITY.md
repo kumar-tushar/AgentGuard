@@ -4,7 +4,9 @@ AgentGuard is a local browser automation sensor and a reactive containment aid. 
 
 ## Data minimization
 
-Never read or retain page text/HTML, form values, passwords, tokens, cookies, headers, screenshots, key codes, selectors or coordinates. Never persist full URLs, paths, queries, fragments, tab titles or favicons. Only canonical hostname, tab ID, static evidence, coarse event aggregates, confidence and policy outcomes are stored. Hostnames can themselves be sensitive; exports require an explicit UI action and should be handled as enterprise telemetry. No upload endpoint, analytics or remote scripts are enabled.
+Never read or retain page text/HTML, form values, passwords, tokens, cookies, headers, screenshots, key codes, selectors or coordinates. Never persist full URLs, paths, queries, fragments, tab titles or favicons. Stored data is limited to canonical hostnames, tab and debugger target IDs, fixed target types, static evidence, bounded counters, timestamps, confidence and policy outcomes. Hostnames can themselves be sensitive; exports require an explicit UI action and should be handled as enterprise telemetry. No upload endpoint, analytics or remote scripts are enabled.
+
+Passive debugger history keeps at most 1,000 target records with eight transitions each in browser-session storage. Current observations expire after 90 seconds. Failed inspection is unavailable coverage, not detachment; sampled attachment spans are not exact connection durations and never identify a controller.
 
 ## Evidence is not identity
 
@@ -25,6 +27,14 @@ All injected results are untrusted and strictly normalized to bounded, allowlist
 Automatic document-start sensors run in an isolated top-frame world under required HTTP(S) host access. Chrome site restrictions still apply; opening the popup neither grants access nor starts detection. Sensor packets contain bounded aggregate counts and timestamps only. The worker validates exact fields, sender extension ID, top-frame document identity/lifecycle, sequence, age and rate before scheduling observation. Signals do not authorize privileged commands. The sensor stops activity collection after 100 seconds without a configuration acknowledgement. A hostile page can generate misleading synthetic events or suppress page-world evidence; these are not authenticated identity signals.
 
 Session history stores only canonical domains, static signal identifiers, fixed timeline descriptions, timestamps and bounded counters. Current tab coverage overrides historical sessions. Loss of coverage does not mean automation ended: old observations retain only their original expiry. Active snapshots survive worker suspension. Bounded durable recovery copies are archived at full-browser restart rather than rebound to live/reused tab IDs. Both recovery copies and ended history obey age/count limits; zero history disables durable recovery too. Failed cross-area writes followed by loss of the session journal can recover only the last successful durable snapshot; failed end/clear actions are not claimed durable. History export/clear are packaged-UI-only operations. Local storage is not an integrity boundary against profile access or a compromised extension. No new security-review exclusions or severity suppressions are established by these implementation notes.
+
+## In-page alerts
+
+Alert dismissal is a presentation-only content-script message, never a policy command. The worker requires an exact packet, its own extension ID, the active top-frame document and an issued, unexpired token. The notice hides only after the worker saves its 24-hour mute. Up to 1,000 tab IDs and mute deadlines are stored in trusted browser-session storage; tokens remain in memory. Mutes survive worker suspension and same-tab navigation, but end on tab close/replacement or full browser restart. Detection, audit and enforcement continue while muted.
+
+Notifications stack on the active accessible web tab in each window. Activation tokens bind the notification-host document to one fresh source assessment and document; callers cannot supply a destination tab or URL. Clicking activates the existing source tab, focuses its window, and mutes that source across all stacks for 24 hours. A focus or storage failure may leave the tab switched but must not acknowledge a saved mute. Canonical source domains appear only inside closed shadow content, not page-readable host attributes; tab IDs and qualified states remain visible in those attributes. These controls do not establish verified human acknowledgement or a new security boundary.
+
+The notice runs in an isolated world with closed shadow content, but its page host can still be hidden, removed or spoofed by a hostile page. Restricted pages and withheld site access can prevent display. Trusted clicks reject ordinary synthetic DOM events, but automation can generate trusted input and dismiss the notice. Neither a red icon nor an in-page notice proves controller identity or provides a security boundary.
 
 ## Containment limits
 

@@ -27,7 +27,8 @@ export interface DetectorResult {
 }
 export interface RuntimeSnapshot {
   webdriver: boolean | null;
-  fingerprints: Fingerprint[];
+  /** Null means the existence checks failed, not that no markers were observed. */
+  fingerprints: Fingerprint[] | null;
 }
 export interface BehaviorSnapshot {
   trustedEvents: number;

@@ -29,7 +29,7 @@ function distance(x: number, y: number, ax: number, ay: number, bx: number, by: 
 }
 
 /** Small code-native shield asset; generated at build time without an image dependency. */
-export function createIcon(size: number): Buffer {
+export function createIcon(size: number, variant: 'neutral' | 'alert' = 'neutral'): Buffer {
   const scanlines = Buffer.alloc(size * (size * 4 + 1));
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const sum = [0, 0, 0, 0];
@@ -37,7 +37,7 @@ export function createIcon(size: number): Buffer {
       const px = (x + (sx + 0.5) / 4) / size; const py = (y + (sy + 0.5) / 4) / size;
       if (!inside(px, py)) continue;
       const check = Math.min(distance(px, py, 0.31, 0.49, 0.46, 0.64), distance(px, py, 0.46, 0.64, 0.7, 0.35)) < 0.047;
-      const color = check ? [9, 27, 41, 255] : [68, 218, 186, 255];
+      const color = check ? [9, 27, 41, 255] : variant === 'alert' ? [239, 68, 68, 255] : [68, 218, 186, 255];
       color.forEach((channel, index) => { sum[index] = sum[index]! + channel; });
     }
     const offset = y * (size * 4 + 1) + 1 + x * 4;

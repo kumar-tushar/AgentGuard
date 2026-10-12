@@ -109,6 +109,17 @@ describe('detector engine and status semantics', () => {
     expect(result.coverage.find(item => item.detector === 'webdriver')?.availability).toBe('unavailable');
   });
 
+  it('isolates failed fingerprint inspection from WebDriver and never calls incomplete negative coverage clear', async () => {
+    const positive = await assess(context({ runtime: { webdriver: true, fingerprints: null }, debuggerAttached: false }));
+    expect(positive.status).toBe('AUTOMATION_LIKELY');
+    expect(positive.confidence).toBe(0.82);
+    expect(positive.coverage.find(item => item.detector === 'fingerprint')?.availability).toBe('unavailable');
+    expect(positive.coverage.find(item => item.detector === 'webdriver')?.availability).toBe('available');
+    expect(positive.identifiedAgent).toBeNull();
+    const negative = await assess(context({ runtime: { webdriver: false, fingerprints: null }, debuggerAttached: false }));
+    expect(negative.status).toBe('UNMONITORED');
+  });
+
   it('discards expired evidence', () => {
     const expired: DetectionEvidence = {
       detector: 'webdriver', family: 'runtime', confidence: 0.82,

@@ -1,8 +1,9 @@
 import { collectRuntime } from '../content/runtime';
 import { collectBehavior } from '../content/behavior';
 import type { Capabilities, DetectionContext, PolicyAction } from '../shared/contracts';
-import type { ControlState } from '../shared/intelligence';
+import { hasAutomation, type ControlState } from '../shared/intelligence';
 import { normalizeRuntime, normalizeBehavior } from '../detection/validation';
+import { FINGERPRINT_PROBES } from '../shared/fingerprints';
 
 /** Own extension tabs can lack tabs.Tab.url without the broad tabs permission. */
 export async function readTab(tabId: number): Promise<{ url?: string; status?: string }> {
@@ -87,7 +88,7 @@ async function debuggerState(tabId: number, snapshot?: DebuggerSnapshot): Promis
 
 export async function observe(tabId: number, behaviorEnabled: boolean, now: number, debuggerSnapshot?: DebuggerSnapshot): Promise<DetectionContext> {
   const [runtime, behavior, debuggerResult] = await Promise.allSettled([
-    within(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: collectRuntime })),
+    within(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: collectRuntime, args: [FINGERPRINT_PROBES] })),
     within(chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: collectBehavior, args: [behaviorEnabled, now] })),
     debuggerState(tabId, debuggerSnapshot),
   ]);
@@ -117,20 +118,19 @@ export function canObserve(url?: string): boolean {
   } catch { return false; }
 }
 
-const BADGE_STATES: Record<ControlState, { text: string; label: string; color: string }> = {
-  AGENT_ACTIVE: { text: 'ACT', label: 'Agent active', color: '#b9364c' },
-  AGENT_CONNECTED: { text: 'CONN', label: 'Agent connected', color: '#9b6515' },
-  AUTOMATION_LIKELY: { text: 'AUTO', label: 'Automation likely', color: '#b9364c' },
-  AUTOMATION_SUSPECTED: { text: '?', label: 'Automation suspected', color: '#9b6515' },
-  NO_AUTOMATION_OBSERVED: { text: '·', label: 'No automation observed', color: '#355366' },
-  UNMONITORED: { text: '—', label: 'Unmonitored', color: '#355366' },
+const STATE_LABELS: Record<ControlState, string> = {
+  AGENT_ACTIVE: 'Agent active',
+  AGENT_CONNECTED: 'Agent connected',
+  AUTOMATION_LIKELY: 'Automation likely',
+  AUTOMATION_SUSPECTED: 'Automation suspected',
+  NO_AUTOMATION_OBSERVED: 'No automation observed',
+  UNMONITORED: 'Unmonitored',
 };
 
 export async function updateBadge(tabId: number, status: ControlState, quarantined = false, policy: PolicyAction = 'none'): Promise<void> {
-  const badge = BADGE_STATES[status];
-  const text = quarantined ? 'STOP' : policy === 'warn' ? 'WARN' : badge.text;
-  const color = quarantined ? '#b9364c' : badge.color;
-  await chrome.action.setBadgeBackgroundColor({ tabId, color });
-  await chrome.action.setBadgeText({ tabId, text });
-  await chrome.action.setTitle({ tabId, title: quarantined ? 'AgentGuard · Quarantine requested · Open to verify containment' : `AgentGuard · Last assessment: ${badge.label} · Open for current evidence and limitations` });
+  const icon = quarantined || policy === 'warn' || hasAutomation(status) ? 'icon-alert' : 'icon';
+  await chrome.action.setIcon({ tabId, path: { 16: `icons/${icon}-16.png`, 32: `icons/${icon}-32.png` } });
+  // Explicitly clear legacy overlays; status details remain in the tooltip and UI.
+  await chrome.action.setBadgeText({ tabId, text: '' });
+  await chrome.action.setTitle({ tabId, title: quarantined ? 'AgentGuard · Quarantine requested · Open to verify containment' : `AgentGuard · Last assessment: ${STATE_LABELS[status]} · Open for current evidence and limitations` });
 }

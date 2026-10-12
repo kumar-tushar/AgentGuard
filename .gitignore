@@ -1,8 +1,32 @@
+# Dependencies and generated extension packages
 node_modules/
 dist/
 artifacts/
+/*.crx
+/*.pem
+
+# Test reports and temporary browser profiles
 playwright-report/
 test-results/
 coverage/
+
+# Local environment configuration (keep shareable templates)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Tool caches and logs
+.vite/
+.vite-temp/
+.cache/
+.npm/
+*.log
 *.tsbuildinfo
+
+# Local editor and operating-system files
+/.idea/
+/.vscode/
 .DS_Store
+Thumbs.db

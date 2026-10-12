@@ -1,8 +1,10 @@
+import type { FingerprintProbe } from '../shared/fingerprints';
+
 /**
  * This function is serialized by chrome.scripting and runs in the MAIN world.
  * Keep it self-contained and return only allowlisted primitive observations.
  */
-export function collectRuntime(): { webdriver: boolean | null; fingerprints: string[] } {
+export function collectRuntime(probes: readonly FingerprintProbe[]): { webdriver: boolean | null; fingerprints: string[] | null } {
   let webdriver: boolean | null = null;
   try {
     const value: unknown = navigator.webdriver;
@@ -12,16 +14,17 @@ export function collectRuntime(): { webdriver: boolean | null; fingerprints: str
   }
 
   const fingerprints: string[] = [];
+  let markersAvailable = true;
   const hasOwn = (name: string): boolean => {
     try {
       return Object.prototype.hasOwnProperty.call(globalThis, name);
     } catch {
+      markersAvailable = false;
       return false;
     }
   };
-  if (hasOwn('__playwright__binding__')) fingerprints.push('playwright-binding');
-  if (hasOwn('__pwInitScripts')) fingerprints.push('playwright-init');
-  if (hasOwn('__selenium_unwrapped') || hasOwn('__selenium_evaluate')) fingerprints.push('selenium-global');
-  if (hasOwn('__webdriver_evaluate') || hasOwn('__webdriver_script_fn')) fingerprints.push('webdriver-global');
-  return { webdriver, fingerprints };
+  for (const probe of probes) {
+    if (probe.ownGlobals.some(hasOwn)) fingerprints.push(probe.id);
+  }
+  return { webdriver, fingerprints: markersAvailable ? fingerprints : null };
 }

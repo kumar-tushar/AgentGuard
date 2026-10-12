@@ -2,7 +2,7 @@ import type { AgentGuardConfig, AuditEventType, Capabilities, Dashboard, Effecti
 import { AuditStore } from '../audit/store';
 import { DEFAULT_CONFIG, resolveConfig } from '../enterprise/config';
 import { domainFromUrl } from '../shared/domains';
-import { capabilities, canObserve, captureDebuggerSnapshot, observe, readTab, stopBehavior, updateBadge, type DebuggerSnapshot } from './browser';
+import { capabilities, canObserve, captureDebuggerSnapshot, observe, readTab, stopBehavior, updateBadge, within, type DebuggerSnapshot } from './browser';
 import { Containment, chromeContainmentPort } from './containment';
 import { isTrustedUi, parseRequest } from './messages';
 import { TabMonitor } from './monitor';
@@ -14,12 +14,15 @@ import { AgentSessionStore } from './agent-sessions';
 import { toSessionObservation } from './session-observation';
 import { hasAutomation } from '../shared/intelligence';
 import { DebuggerIntelligenceStore } from './debugger-intelligence';
+import { TabAlerts, parseAlertActivation } from './tab-alerts';
+import { renderTabAlert } from '../content/tab-alert';
 
 const CONFIG_KEY = 'agentguard.config.v1';
 const SESSION_KEY = 'agentguard.session.v1';
 const AGENT_SESSIONS_KEY = 'agentguard.agent-sessions.v1';
 const AGENT_HISTORY_KEY = 'agentguard.agent-history.v1';
 const DEBUGGER_HISTORY_KEY = 'agentguard.debugger-history.v1';
+const ALERT_MUTES_KEY = 'agentguard.alert-mutes.v1';
 const ALARM = 'agentguard.refresh.v1';
 let config: EffectiveConfig = { values: DEFAULT_CONFIG, managedKeys: [], errors: [] };
 const healthErrors = new Set<string>();
@@ -28,9 +31,31 @@ let refreshQueue: Promise<void> | undefined;
 let lastCapabilities: Capabilities = { debugger: false, networkBlocking: false, origins: [] };
 const sensorGate = new SensorGate();
 const scheduled = new Set<number>();
+let inventoryScheduled = false;
 let scheduleTimer: ReturnType<typeof setTimeout> | undefined;
 let eventRefresh: Promise<void> | undefined;
 let sessionsReady = false;
+let alertsReady = false;
+const alerts = new TabAlerts({
+  async read() { return (await chrome.storage.session.get(ALERT_MUTES_KEY))[ALERT_MUTES_KEY]; },
+  write: data => chrome.storage.session.set({ [ALERT_MUTES_KEY]: data }),
+  assessments: () => config.values.monitoringEnabled ? monitor.snapshot() : [],
+  async recipients() {
+    return (await chrome.tabs.query({ active: true })).flatMap(tab => tab.id !== undefined && canObserve(tab.url) ? [tab.id] : []);
+  },
+  async document(tabId) {
+    const frame = await within(chrome.webNavigation.getFrame({ tabId, frameId: 0 }));
+    return frame?.documentLifecycle === 'active' && canObserve(frame.url) ? frame.documentId : null;
+  },
+  async present(tabId, documentId, input) {
+    await within(chrome.scripting.executeScript({ target: { tabId, documentIds: [documentId] }, world: 'ISOLATED', func: renderTabAlert, args: [input] }));
+  },
+  async activate(tabId) {
+    const tab = await within(chrome.tabs.update(tabId, { active: true }));
+    if (!tab || tab.id !== tabId) throw new Error('Tab activation unavailable');
+    await within(chrome.windows.update(tab.windowId, { focused: true }));
+  },
+});
 const state = new SessionStore({
   async read() { return (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY]; },
   write: (data) => chrome.storage.session.set({ [SESSION_KEY]: data }),
@@ -55,6 +80,11 @@ const isContainmentPage = (url?: string) => url?.split(/[?#]/, 1)[0] === chrome.
 function report(error: string): void { healthErrors.add(error); }
 function safely(work: Promise<unknown>, error: string): void {
   void work.catch(() => report(error));
+}
+async function refreshAlerts(): Promise<void> {
+  if (!alertsReady) return;
+  try { await alerts.refresh(); }
+  catch { report('An in-page alert could not be displayed. Check AgentGuard from the extensions menu.'); }
 }
 
 async function log(eventType: AuditEventType, tab?: Pick<TabAgentStatus, 'tabId' | 'domain' | 'confidence'>, policyAction: PolicyAction = 'none'): Promise<void> {
@@ -118,15 +148,18 @@ async function scanTab(tabId: number, snapshot?: DebuggerSnapshot): Promise<TabA
 }
 
 /** Event bursts are batched; one target snapshot serves all queued tabs with bounded concurrency. */
-function scheduleTab(tabId: number): void {
-  if (scheduled.size >= 1000 && !scheduled.has(tabId)) { report('Monitoring capacity exceeded; some tabs have reduced coverage.'); return; }
-  scheduled.add(tabId);
+function scheduleTab(tabId?: number): void {
+  if (tabId !== undefined) {
+    if (scheduled.size >= 1000 && !scheduled.has(tabId)) { report('Monitoring capacity exceeded; some tabs have reduced coverage.'); return; }
+    scheduled.add(tabId);
+  } else inventoryScheduled = true;
   if (scheduleTimer !== undefined || eventRefresh) return;
   scheduleTimer = setTimeout(() => {
     scheduleTimer = undefined;
     eventRefresh = ready.then(async () => {
       const ids = [...scheduled];
       scheduled.clear();
+      inventoryScheduled = false;
       // The batch can contain newly created targets absent from the prior snapshot.
       const snapshot = await captureDebuggerSnapshot(true);
       lastCapabilities = await capabilities(snapshot);
@@ -134,10 +167,12 @@ function scheduleTab(tabId: number): void {
       for (let start = 0; start < ids.length; start += 4) {
         await Promise.all(ids.slice(start, start + 4).map(id => scanTab(id, snapshot).catch(() => report('An event-driven observation failed.'))));
       }
+      await refreshAlerts();
     }).finally(() => {
       eventRefresh = undefined;
       const next = scheduled.values().next().value;
       if (next !== undefined) scheduleTab(next);
+      else if (inventoryScheduled) scheduleTab();
     });
     safely(eventRefresh, 'Automatic monitoring needs attention.');
   }, 200);
@@ -173,6 +208,8 @@ async function setup(): Promise<void> {
   const tabs = await chrome.tabs.query({});
   const ids = new Set(tabs.flatMap((tab) => tab.id === undefined ? [] : [tab.id]));
   await state.load(ids);
+  try { await alerts.load(ids); alertsReady = true; }
+  catch { report('Alert dismissal preferences could not be read. In-page alerts are unavailable until storage recovers.'); }
   try { await debuggerIntelligence.load(); }
   catch { report('Debugger observation history could not be restored.'); }
   try { await sessions.load(ids); sessionsReady = true; }
@@ -192,6 +229,10 @@ async function refreshAll(): Promise<void> {
   if (refreshQueue) return refreshQueue;
   refreshQueue = (async () => {
     const allTabs = await chrome.tabs.query({});
+    if (!alertsReady) {
+      try { await alerts.load(new Set(allTabs.flatMap(tab => tab.id === undefined ? [] : [tab.id]))); alertsReady = true; }
+      catch { /* Preserve detection while alert preferences are unavailable. */ }
+    }
     if (allTabs.length > 500) report('This browser exceeds the 500-tab assessment retention limit. Older observations may be evicted.');
     const snapshot = await captureDebuggerSnapshot(true);
     lastCapabilities = await capabilities(snapshot);
@@ -211,6 +252,7 @@ async function refreshAll(): Promise<void> {
         catch { report('A tab refresh failed; its previous evidence may expire.'); }
       }));
     }
+    await refreshAlerts();
     await audit.list();
     if (sessionsReady) await sessions.expire(Date.now());
   })();
@@ -323,6 +365,18 @@ async function handle(request: Request): Promise<unknown> {
 }
 
 chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
+  if (typeof input === 'object' && input !== null && Reflect.get(input, 'type') === 'ACTIVATE_TAB_ALERT') {
+    const source = sensorSender(sender, chrome.runtime.id);
+    const token = parseAlertActivation(input);
+    if (!source || !token) { respond({ ok: false }); return false; }
+    void ready.then(async () => {
+      if (!alertsReady) return { ok: false };
+      const mutedUntil = await alerts.activate(source.tabId, source.documentId, token);
+      if (mutedUntil !== null) safely(refreshAlerts(), 'Alert refresh after tab activation failed.');
+      return mutedUntil === null ? { ok: false } : { ok: true, mutedUntil };
+    }).then(respond, () => respond({ ok: false }));
+    return true;
+  }
   if (typeof input === 'object' && input !== null && Reflect.get(input, 'type') === 'SENSOR_SIGNAL') {
     const source = sensorSender(sender, chrome.runtime.id);
     const signal = parseSensorSignal(input, Date.now());
@@ -349,7 +403,9 @@ chrome.runtime.onMessage.addListener((input: unknown, sender, respond) => {
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   // Invalidate synchronously, including while initialization/other async work is pending.
   if (change.status === 'loading' || change.url !== undefined) {
+    alerts.invalidate(tabId);
     void monitor.invalidate(tabId, false, false);
+    safely(ready.then(refreshAlerts), 'An outdated in-page alert could not be removed; it will expire automatically.');
     safely(ready.then(async () => {
       await monitor.invalidate(tabId);
       await updateBadge(tabId, 'UNMONITORED', state.quarantines.has(tabId));
@@ -359,6 +415,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 });
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   scheduleTab(tabId);
+  safely(ready.then(refreshAlerts), 'Tab notification reconciliation failed.');
 });
 chrome.tabs.onCreated.addListener(tab => { if (tab.id !== undefined) scheduleTab(tab.id); });
 chrome.windows.onFocusChanged.addListener(windowId => {
@@ -370,8 +427,11 @@ chrome.windows.onFocusChanged.addListener(windowId => {
 chrome.webNavigation.onHistoryStateUpdated.addListener(event => { if (event.frameId === 0) scheduleTab(event.tabId); });
 chrome.webNavigation.onReferenceFragmentUpdated.addListener(event => { if (event.frameId === 0) scheduleTab(event.tabId); });
 chrome.tabs.onRemoved.addListener((tabId) => {
+  alerts.invalidate(tabId);
+  safely(ready.then(() => alerts.forget(tabId)), 'A closed tab alert preference could not be cleared.');
   sensorGate.forget(tabId);
   scheduled.delete(tabId);
+  scheduleTab(); // Reconcile disappearance without trying to observe the closed tab.
   void monitor.invalidate(tabId, true, false);
   safely(ready.then(async () => {
     if (sessionsReady) {
@@ -380,16 +440,19 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     }
     await containment.release(tabId);
     await monitor.invalidate(tabId, true);
+    await refreshAlerts();
   }), 'Could not clean up a closed tab.');
 });
 chrome.tabs.onReplaced.addListener((added, removed) => {
+  alerts.invalidate(removed);
+  safely(ready.then(() => alerts.forget(removed)), 'A replaced tab alert preference could not be cleared.');
   void monitor.invalidate(removed, true, false);
   safely(ready.then(async () => {
     if (sessionsReady) {
       try { await sessions.endTab(removed, 'closed', Date.now()); }
       catch { report('A replaced tab session could not be saved to history.'); }
     }
-    await monitor.invalidate(removed, true); await containment.release(removed); await scanTab(added);
+    await monitor.invalidate(removed, true); await containment.release(removed); scheduleTab(added);
   }), 'Could not assess a replaced tab.');
 });
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === ALARM) safely(refreshAll(), 'Scheduled monitoring failed.'); });

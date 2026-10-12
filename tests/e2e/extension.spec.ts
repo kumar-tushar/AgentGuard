@@ -96,7 +96,7 @@ test('single extension: automatic detection, real policy, quarantine, release an
     await site.screenshot({ path: testInfo.outputPath('quarantined.png'), fullPage: true });
 
     // Without the optional DNR permission, a same-tab escape still triggers
-    // real reactive page replacement instead of merely retaining a stale STOP record.
+    // real reactive page replacement instead of merely retaining a stale containment record.
     await site.goto('http://127.0.0.1/attempted-return').catch((error: unknown) => {
       if (!(error instanceof Error) || !error.message.includes('ERR_ABORTED')) throw error;
     });
@@ -214,6 +214,38 @@ test('optional permissions granted: real DNR blocking, tab isolation, automatic 
   }
 });
 
+test('real Playwright binding registry fixture remains a framework hint, never an identified AI controller', async () => {
+  const { context, options } = await openExtension();
+  try {
+    const site = await context.newPage();
+    await site.exposeBinding('agentGuardBindingFixture', () => true);
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Runtime fixture</h1>' }));
+    await site.goto('http://127.0.0.1/PRIVATE_BINDING_PATH?token=PRIVATE_BINDING_TOKEN');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url?.includes('PRIVATE_BINDING_PATH'))!.id!);
+    const detected = await recordedTab(options, tabId, tab => tab.evidence.some(item => item.metadata.marker === 'playwright-binding'));
+    expect(detected.identifiedAgent).toBeNull();
+    expect(detected.frameworkHints).toEqual(['Playwright-like marker']);
+    expect(detected.evidence.find(item => item.detector === 'fingerprint')).toMatchObject({ confidence: 0.34, metadata: { marker: 'playwright-binding' } });
+    // These are genuinely installed by Playwright exposeBinding, not spoofed marker fixtures.
+    expect(await site.evaluate(() => ['__playwright__binding__', '__playwright__binding__controller__']
+      .map(name => Object.prototype.hasOwnProperty.call(globalThis, name)))).toEqual([true, true]);
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).sessions.find(session => session.tabId === tabId)?.automationStack.frameworks).toEqual(['Playwright-like']);
+    // Hiding the standard flag cannot promote a framework hint into confirmed agent control.
+    await site.evaluate(() => {
+      Object.defineProperty(navigator, 'webdriver', { value: false });
+      location.hash = 'webdriver-hidden';
+    });
+    const hintOnly = await recordedTab(options, tabId, tab => tab.assessedAt > detected.assessedAt && tab.status === 'AUTOMATION_SUSPECTED');
+    expect(hintOnly.identifiedAgent).toBeNull();
+    expect(hintOnly.evidence.some(item => item.detector === 'webdriver')).toBe(false);
+    expect(hintOnly.evidence.filter(item => item.detector === 'fingerprint')).toHaveLength(1);
+    expect(hintOnly.confidence).toBe(hintOnly.evidence.some(item => item.detector === 'debugger') ? 0.5908 : 0.34);
+    const sessions = await send(options, { type: 'EXPORT_SESSIONS' });
+    expect(JSON.stringify(sessions)).not.toMatch(/PRIVATE_BINDING|Microsoft|agentGuardBindingFixture/);
+    expect(sessions.sessions.find(session => session.tabId === tabId)?.controller.displayName).toBeNull();
+  } finally { await context.close(); }
+});
+
 test('single extension passively reports debugger attachment evidence without identity claims', async () => {
   const { context, options } = await openExtension();
   try {
@@ -234,6 +266,25 @@ test('single extension passively reports debugger attachment evidence without id
     expect(result.evidence.some((item) => item.detector === 'debugger')).toBe(attached);
     expect(result.status).toBe('AUTOMATION_LIKELY');
     expect(result.confidence).toBe(attached ? 0.8884 : 0.82);
+    const history = (await send(options, { type: 'GET_DASHBOARD' })).debuggerIntelligence;
+    const observedTarget = history.targets.find(target => target.tabId === tabId);
+    expect(history.coverageAvailable).toBe(true);
+    expect(observedTarget).toMatchObject({ type: 'page', domain: '127.0.0.1', owner: 'unknown',
+      currentAttached: attached, observationFresh: true, disappearedAt: null });
+    expect(observedTarget!.timeline.some(event => event.type === 'target_seen')).toBe(true);
+    await options.getByRole('button', { name: 'Refresh data', exact: true }).click();
+    await options.getByRole('button', { name: 'Coverage & permissions', exact: true }).click();
+    const panel = options.getByRole('region', { name: 'Debugger observation history' });
+    const row = panel.getByRole('row').filter({ hasText: observedTarget!.targetId });
+    await expect(row.getByRole('cell', { name: 'Unknown', exact: true })).toBeVisible();
+    await expect(row.getByRole('cell', { name: attached ? 'Debugger attached' : 'No attachment observed', exact: true })).toBeVisible();
+    await expect(panel.getByText(/not exact connection duration/)).toBeVisible();
+    await site.close();
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).debuggerIntelligence.targets
+      .find(target => target.targetId === observedTarget!.targetId)?.disappearedAt).toEqual(expect.any(Number));
+    const disappeared = (await send(options, { type: 'GET_DASHBOARD' })).debuggerIntelligence.targets.find(target => target.targetId === observedTarget!.targetId);
+    expect(disappeared).toMatchObject({ currentAttached: null, observationFresh: false, owner: 'unknown' });
+    expect(disappeared!.timeline.at(-1)?.type).toBe('target_disappeared');
   } finally { await context.close(); }
 });
 
@@ -263,6 +314,9 @@ test('simulated debugger policy denial reports reduced coverage without erasing 
     const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find((tab) => tab.url === 'http://127.0.0.1/debugger-denied')?.id);
     expect(tabId).toBeDefined();
     await recordedTab(options, tabId!, tab => tab.status === 'AUTOMATION_LIKELY');
+
+    const beforeDenial = (await send(options, { type: 'GET_DASHBOARD' })).debuggerIntelligence.targets.find(target => target.tabId === tabId);
+    expect(beforeDenial).toBeDefined();
 
     // Simulate rejection at Chrome's API boundary, not in AgentGuard's detectors.
     // Actual organization policy deployment remains a managed-Chrome acceptance check.
@@ -296,6 +350,17 @@ test('simulated debugger policy denial reports reduced coverage without erasing 
     });
     const dashboard = await send(options, { type: 'GET_DASHBOARD' });
     expect(dashboard.capabilities.debugger).toBe(false);
+    expect(dashboard.debuggerIntelligence.coverageAvailable).toBe(false);
+    const deniedTarget = dashboard.debuggerIntelligence.targets.find(target => target.targetId === beforeDenial!.targetId);
+    expect(deniedTarget).toMatchObject({ currentAttached: null, observationFresh: false, attached: beforeDenial!.attached,
+      lastSeen: beforeDenial!.lastSeen, disappearedAt: null, owner: 'unknown' });
+    expect(deniedTarget!.timeline.at(-1)?.type).toBe('coverage_lost');
+    expect(deniedTarget!.timeline.some(event => event.type === 'detachment_observed' || event.type === 'target_disappeared')).toBe(false);
+    await options.getByRole('button', { name: 'Refresh data', exact: true }).click();
+    await options.getByRole('button', { name: 'Coverage & permissions', exact: true }).click();
+    const historyPanel = options.getByRole('region', { name: 'Debugger observation history' });
+    await expect(historyPanel.getByText(/Current target inspection unavailable/)).toBeVisible();
+    await expect(historyPanel.getByRole('row').filter({ hasText: deniedTarget!.targetId }).getByRole('cell', { name: 'Unavailable', exact: true })).toBeVisible();
     expect(JSON.stringify({ automated, reduced, dashboard })).not.toContain('PRIVATE_POLICY_DETAIL');
   } finally { await context.close(); }
 });
@@ -342,6 +407,15 @@ test('four tabs are monitored and recovered after worker restart with the popup 
     const sessionIds = (await persistedSessions(worker)).filter(session => ids.includes(session.tabId)).map(session => session.id).sort();
     expect(context.pages().some(page => page.url().startsWith(`chrome-extension://${extensionId}/`))).toBe(false);
 
+    // Simulate badges left by a previous extension version. Reconciliation must
+    // clear every text overlay without changing the underlying detection state.
+    await worker.evaluate(async tabIds => {
+      const legacyTexts = ['AUTO', 'WARN', 'STOP', '—'];
+      await Promise.all(tabIds.map((tabId, index) => chrome.action.setBadgeText({ tabId, text: legacyTexts[index]! })));
+    }, ids);
+    expect(await worker.evaluate(async tabIds => Promise.all(tabIds.map(tabId => chrome.action.getBadgeText({ tabId }))), ids))
+      .toEqual(['AUTO', 'WARN', 'STOP', '—']);
+
     const browserSession = await context.browser()!.newBrowserCDPSession();
     const { targetInfos } = await browserSession.send('Target.getTargets');
     const target = targetInfos.find(item => item.type === 'service_worker' && item.url.startsWith(`chrome-extension://${extensionId}/`));
@@ -354,16 +428,191 @@ test('four tabs are monitored and recovered after worker restart with the popup 
     // Tab activation/navigation wakes the worker; no AgentGuard UI or scan message is involved.
     await sites[0]!.bringToFront();
     await sites[0]!.reload();
-    const restoredWorker = context.serviceWorkers().find(item => item.url() === worker.url()) ?? await context.waitForEvent('serviceworker', { timeout: 10_000 });
-    await expect.poll(() => restoredWorker.evaluate(() => Reflect.has(globalThis, '__agentguardE2EWorkerGeneration__'))).toBe(false);
+    let restoredWorker = worker;
+    await expect.poll(async () => {
+      const candidate = context.serviceWorkers().find(item => item.url() === worker.url());
+      if (!candidate) return 'restarting';
+      try {
+        const hasOldGeneration = await candidate.evaluate(() => Reflect.has(globalThis, '__agentguardE2EWorkerGeneration__'));
+        restoredWorker = candidate;
+        return hasOldGeneration;
+      } catch (error) {
+        // The intentional close can race an evaluation while Chrome replaces the context.
+        // Only that transition is retried; it cannot satisfy the cleared-sentinel assertion.
+        if (error instanceof Error && error.message === 'worker.evaluate: Service worker restarted') return 'restarting';
+        throw error;
+      }
+    }).toBe(false);
     await expect.poll(async () => {
       const recorded = await persistedTabs(restoredWorker);
       return ids.every(id => recorded[id]?.status === 'AUTOMATION_LIKELY' && recorded[id]!.assessedAt > restartedAt);
     }).toBe(true);
-    await expect.poll(() => restoredWorker.evaluate(async (tabIds) => Promise.all(tabIds.map(tabId => chrome.action.getBadgeText({ tabId }))), ids)).toEqual(['AUTO', 'AUTO', 'AUTO', 'AUTO']);
+    await expect.poll(() => restoredWorker.evaluate(async (tabIds) => Promise.all(tabIds.map(tabId => chrome.action.getBadgeText({ tabId }))), ids)).toEqual(['', '', '', '']);
     await expect.poll(async () => (await persistedSessions(restoredWorker)).filter(session => ids.includes(session.tabId) && session.endedAt === null).map(session => session.id).sort()).toEqual(sessionIds);
     expect(context.pages().some(page => page.url().startsWith(`chrome-extension://${extensionId}/`))).toBe(false);
     expect(await restoredWorker.evaluate(async () => (await chrome.action.getUserSettings()).isOnToolbar)).toBe(false);
+  } finally { await context.close(); }
+});
+
+test('unpinned cross-tab alerts stack, switch to their source and mute only that tab for 24 hours', async ({}, testInfo) => {
+  const path = resolve('dist');
+  const context = await chromium.launchPersistentContext('', {
+    channel: 'chromium', headless: true,
+    args: [`--disable-extensions-except=${path}`, `--load-extension=${path}`, '--enable-unsafe-extension-debugging'],
+  });
+  try {
+    let worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 10_000 });
+    const extensionId = new URL(worker.url()).hostname;
+    expect(await worker.evaluate(async () => (await chrome.action.getUserSettings()).isOnToolbar)).toBe(false);
+    await context.route(/^http:\/\/(?:127\.0\.0\.1|localhost)\//, route => route.fulfill({
+      contentType: 'text/html', body: '<!doctype html><h1>Unpinned alert fixture</h1><button>Page action</button>',
+    }));
+    const site = await context.newPage();
+    await site.setViewportSize({ width: 1280, height: 800 });
+    await site.goto('http://127.0.0.1/unpinned-alert');
+    const tabId = await worker.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/unpinned-alert')!.id!);
+    const card = (page: Page, sourceId: number) => page.locator(`[data-agentguard-alert][data-agentguard-tab-id="${sourceId}"]`);
+    const alert = card(site, tabId);
+    await expect(alert).toBeVisible();
+    await expect(alert).toHaveAttribute('role', 'button');
+    await expect(alert).toHaveAccessibleName(/AgentGuard: Automation likely/);
+    const bounds = (await site.locator('[data-agentguard-alert-stack]').boundingBox())!;
+    expect(bounds.x).toBeGreaterThan(1280 / 2);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y).toBeLessThan(50);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(1280);
+    expect(bounds.width).toBeLessThanOrEqual(380);
+    expect(bounds.height).toBeLessThanOrEqual(200);
+    await site.screenshot({ path: testInfo.outputPath('unpinned-alert.png'), fullPage: true });
+    const persistedTab = () => worker.evaluate(async id => {
+      const stored = (await chrome.storage.session.get('agentguard.session.v1'))['agentguard.session.v1'] as SessionData;
+      return stored.tabs[id];
+    }, tabId);
+    const mutes = () => worker.evaluate(async () => {
+      const data = (await chrome.storage.session.get('agentguard.alert-mutes.v1'))['agentguard.alert-mutes.v1'] as
+        { schemaVersion: 1; entries: { tabId: number; mutedUntil: number }[] } | undefined;
+      return data?.entries ?? [];
+    });
+    expect((await persistedTab())?.status).toBe('AUTOMATION_LIKELY');
+    expect((await persistedTab())?.evidence.some(item => item.detector === 'webdriver' && item.metadata.webdriver === true)).toBe(true);
+
+    const other = await context.newPage();
+    await other.goto('http://localhost/other-tab');
+    const otherId = await worker.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://localhost/other-tab')!.id!);
+    const remoteOpened = context.waitForEvent('page');
+    const remote = await worker.evaluate(async () => {
+      // Create the window before navigating so Playwright routing is installed
+      // before its first HTTP request; do not depend on a machine-local server.
+      const created = await chrome.windows.create({ url: 'about:blank', focused: true });
+      if (!created?.tabs?.[0]?.id || created.id === undefined) throw new Error('Separate browser window did not open');
+      return { windowId: created.id!, tabId: created.tabs![0]!.id! };
+    });
+    const remotePage = await remoteOpened;
+    await remotePage.goto('http://localhost/remote-tab');
+    await expect(remotePage.getByRole('heading', { name: 'Unpinned alert fixture' })).toBeVisible();
+    await remotePage.setViewportSize({ width: 1280, height: 800 });
+    await expect(remotePage.locator('[data-agentguard-alert]')).toHaveCount(3);
+    const remoteCards = await remotePage.locator('[data-agentguard-alert]').all();
+    const positions = (await Promise.all(remoteCards.map(element => element.boundingBox()))).map(position => position!).sort((a, b) => a.y - b.y);
+    expect(positions[0]!.y).toBeLessThan(50);
+    for (let index = 0; index < positions.length; index += 1) {
+      const position = positions[index]!;
+      expect(position.x).toBeGreaterThan(1280 / 2);
+      expect(position.width).toBeLessThanOrEqual(380);
+      expect(position.height).toBeLessThanOrEqual(200);
+      if (index > 0) expect(position.y).toBeGreaterThanOrEqual(positions[index - 1]!.y + positions[index - 1]!.height);
+    }
+    await expect(card(remotePage, tabId)).toHaveAccessibleName(new RegExp(`Tab ${tabId}\\.`));
+    await expect(card(remotePage, otherId)).toHaveAccessibleName(new RegExp(`Tab ${otherId}\\.`));
+    await expect(card(remotePage, remote.tabId)).toHaveAccessibleName(new RegExp(`Tab ${remote.tabId}\\.`));
+    expect((await remotePage.locator('[data-agentguard-alert]').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')))).join(' '))
+      .not.toMatch(/Click to hide|24 hours|\/unpinned-alert|\/other-tab|\/remote-tab/);
+    await remotePage.screenshot({ path: testInfo.outputPath('stacked-alerts.png'), fullPage: true });
+
+    // Page-script dispatch cannot impersonate a trusted user acknowledgement.
+    await card(remotePage, tabId).evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await expect(card(remotePage, tabId)).toBeVisible();
+    expect((await mutes()).some(entry => entry.tabId === tabId)).toBe(false);
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id)).toBe(remote.tabId);
+    const clickedAt = Date.now();
+    await card(remotePage, tabId).click();
+    await expect.poll(() => worker.evaluate(async id => {
+      const tab = await chrome.tabs.get(id);
+      const window = await chrome.windows.get(tab.windowId);
+      return { active: tab.active, focused: window.focused };
+    }, tabId)).toEqual({ active: true, focused: true });
+    await expect.poll(async () => (await mutes()).find(entry => entry.tabId === tabId)?.mutedUntil).toEqual(expect.any(Number));
+    await expect(alert).toHaveCount(0);
+    await expect(card(site, otherId)).toBeVisible();
+    await expect(card(site, remote.tabId)).toBeVisible();
+    expect((await mutes()).some(entry => [otherId, remote.tabId].includes(entry.tabId))).toBe(false);
+    const mutedUntil = (await mutes()).find(entry => entry.tabId === tabId)!.mutedUntil;
+    expect(mutedUntil).toBeGreaterThanOrEqual(clickedAt + 24 * 60 * 60 * 1000);
+    expect(mutedUntil).toBeLessThan(clickedAt + 24 * 60 * 60 * 1000 + 10_000);
+
+    const beforeNavigation = (await persistedTab())!.assessedAt;
+    await site.goto('http://localhost/muted-navigation');
+    await expect.poll(async () => (await persistedTab())?.assessedAt ?? 0).toBeGreaterThan(beforeNavigation);
+    await expect(alert).toHaveCount(0);
+    const beforeReload = (await persistedTab())!.assessedAt;
+    await site.reload();
+    await expect.poll(async () => (await persistedTab())?.assessedAt ?? 0).toBeGreaterThan(beforeReload);
+    await expect(alert).toHaveCount(0);
+    await expect(card(site, otherId)).toBeVisible();
+    await remotePage.close();
+    await expect(card(site, remote.tabId)).toHaveCount(0);
+    await expect(card(site, otherId)).toBeVisible();
+    expect(context.pages().some(page => page.url().startsWith(`chrome-extension://${extensionId}/`))).toBe(false);
+
+    const browserSession = await context.browser()!.newBrowserCDPSession();
+    const restartWorker = async () => {
+      const { targetInfos } = await browserSession.send('Target.getTargets');
+      const target = targetInfos.find(item => item.type === 'service_worker' && item.url.startsWith(`chrome-extension://${extensionId}/`));
+      expect(target).toBeDefined();
+      await worker.evaluate(() => Reflect.set(globalThis, '__agentguardE2EAlertGeneration__', true));
+      await browserSession.send('Target.closeTarget', { targetId: target!.targetId });
+      await site.bringToFront();
+      await site.reload();
+      await expect.poll(async () => {
+        const candidate = context.serviceWorkers().find(item => item.url() === worker.url());
+        if (!candidate) return 'restarting';
+        try {
+          const hasOldGeneration = await candidate.evaluate(() => Reflect.has(globalThis, '__agentguardE2EAlertGeneration__'));
+          worker = candidate;
+          return hasOldGeneration;
+        } catch (error) {
+          if (error instanceof Error && error.message === 'worker.evaluate: Service worker restarted') return 'restarting';
+          throw error;
+        }
+      }).toBe(false);
+    };
+    const beforeRestart = Date.now();
+    await restartWorker();
+    await expect.poll(async () => (await persistedTab())?.assessedAt ?? 0).toBeGreaterThan(beforeRestart);
+    expect((await mutes()).find(entry => entry.tabId === tabId)?.mutedUntil).toBe(mutedUntil);
+    await expect(alert).toHaveCount(0);
+    await expect(card(site, otherId)).toBeVisible();
+
+    // Only the mute deadline is a fixture: actual WebDriver evidence and worker
+    // reconciliation still determine whether the alert returns after expiry.
+    await worker.evaluate(async id => chrome.storage.session.set({
+      'agentguard.alert-mutes.v1': { schemaVersion: 1, entries: [{ tabId: id, mutedUntil: Date.now() - 1000 }] },
+    }), tabId);
+    await restartWorker();
+    await expect(alert).toBeVisible();
+    await expect(alert).toHaveAccessibleName(/Automation likely/);
+    expect((await mutes()).some(entry => entry.tabId === tabId && entry.mutedUntil > Date.now())).toBe(false);
+    expect(await worker.evaluate(async () => (await chrome.action.getUserSettings()).isOnToolbar)).toBe(false);
+    expect(context.pages().some(page => page.url().startsWith(`chrome-extension://${extensionId}/`))).toBe(false);
+
+    // Disabling monitoring must clear already-rendered notices as well.
+    const options = await context.newPage();
+    await options.goto(`chrome-extension://${extensionId}/options.html`);
+    const dashboard = await send(options, { type: 'GET_DASHBOARD' });
+    await send(options, { type: 'SAVE_CONFIG', config: { ...dashboard.config.values, monitoringEnabled: false } });
+    await expect(alert).toHaveCount(0);
+    await expect(site.locator('[data-agentguard-alert-stack]')).toHaveCount(0);
+    await expect(other.locator('[data-agentguard-alert]')).toHaveCount(0);
   } finally { await context.close(); }
 });
 
