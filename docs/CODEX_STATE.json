@@ -3,12 +3,12 @@
   "phase": 6,
   "phaseName": "Local competitor-parity expansion",
   "status": "in_progress",
-  "lastCompletedMilestone": "Behavioral false-positive detection removed across scoring/restoration/expiry and downstream UI/policy; TypeScript, 492 unit/integration tests across 31 files, 21 Playwright scenarios and 23-file byte-matched ZIP verified; approved security guidance updated",
-  "currentTask": "Requested behavioral false-positive fix complete and packaged; broader product roadmap and deployment acceptance remain in progress",
-  "nextTask": "Complete boundary-violation telemetry and stronger activity attribution; broader real-tool/native/managed/provider validation and separately authenticated fleet backend remain incomplete",
+  "lastCompletedMilestone": "Native popup test uses headed Chromium without emulation and Linux CI uses Xvfb with failure diagnostics; strict TypeScript, 492 unit/integration tests, 21 Playwright cases and 23-file ZIP verified locally on macOS",
+  "currentTask": "CI test-harness changes locally verified and packaged; original Ubuntu 490px geometry failure still requires a CI rerun",
+  "nextTask": "Rerun Ubuntu CI to verify the native popup change; broader boundary telemetry, attribution, deployment matrix and authenticated fleet backend remain separate unfinished work",
   "filesInProgress": [],
-  "tests": { "typecheck": "pass", "unit": "492_pass_31files", "build": "single_dist_pass", "e2e": "21_pass_1.8m", "package": "single_zip_pass_2026-10-18_23_files_byte_match_sha256_7a4d33455814322ae35013320b628822d417f0508051475f2d6bc94048828ecb" },
-  "knownIssues": ["Boundary-violation telemetry, stronger attribution and real-tool/native/managed/provider matrix remain incomplete; no full-product certification", "All SECURITY changes explicitly approved and applied; root-only policy scope verified", "Git baseline is ad67706; preserve user work", "Use explicit current repo workdir and Node 24 PATH"],
+  "tests": { "typecheck": "pass", "unit": "492_pass_31files", "build": "single_dist_pass", "e2e": "21_pass_1.6m_macos", "nativePopup": "3_headed_repetitions_pass_27.5s_macos", "ubuntuCI": "rerun_required_not_verified_locally", "package": "single_zip_pass_2026-10-19_23_files_byte_match_sha256_ddcc131d80e684ab9160ea2ed29d34073ab198cda35a454dc1fe2f9b3e4f2f53" },
+  "knownIssues": ["Original Ubuntu native popup failure is not locally reproduced; headed/Xvfb CI changes need a Linux rerun", "Boundary-violation telemetry, stronger attribution and real-tool/native/managed/provider matrix remain incomplete; no full-product certification", "All SECURITY changes explicitly approved and applied; root-only policy scope verified", "Git baseline is 993d620; preserve user work", "Use explicit current repo workdir and Node 24 PATH"],
   "requirementsFile": "docs/PRODUCT_REQUIREMENTS.md",
-  "updatedAt": "2026-10-18"
+  "updatedAt": "2026-10-19"
 }

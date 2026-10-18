@@ -59,6 +59,8 @@ npm run dev                  # rebuild extension on changes; reload it in Chrome
 
 Browser tests exercise automatic monitoring and in-page alerts without a popup or pinning, per-tab 24-hour dismissal, MAIN/ISOLATED probes, policy, recovery after worker termination, data minimization, passive debugger inspection, and DNR containment. Network-blocking tests use a disposable copy with optional DNR pregranted at installation; executable files are unchanged. Native consent dialogs and real enterprise policy deployment still require manual release checks.
 
+The native toolbar-popup sizing regression opens headed Chromium without viewport emulation; the other cases remain headless. On Linux without a desktop display, use `xvfb-run -a npm run test:e2e` (or `xvfb-run -a npm run package` for packaging). CI supplies Xvfb and uploads screenshots, native geometry and error context on failure, excluding disposable browser profiles.
+
 `npm run check` runs type checking, unit/integration tests and the single production build. `npm run package` also runs browser tests and creates one versioned ZIP archive, `artifacts/agentguard-<version>.zip`, from `dist/`. It requires Chromium installed by Playwright and the `zip` executable (included on macOS and the Linux CI runner). The ZIP contains only built extension files. No signing key or Chrome Web Store account is included.
 
 ## Enterprise operation

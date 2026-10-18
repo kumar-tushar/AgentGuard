@@ -1,6 +1,12 @@
 # AgentGuard Codex Handoff
 
-## Current checkpoint — 2026-10-18: behavioral false positives (takes precedence below)
+## Current checkpoint — 2026-10-19: Ubuntu native popup CI failure
+
+The supplied CI log passes 20 scenarios but measures a 490px native popup viewport rather than 400px in the final case. The unchanged native case passed three repetitions on this macOS host (19.8s); the Ubuntu geometry cause is not locally reproduced. No Linux runtime is available here. The native-window case now uses headed Chromium with no emulated viewport; Linux CI provides Xvfb. It waits for exact 400px viewport/shell geometry, retains every width/height/overflow/header/scroll/reopen assertion, and saves native screenshots and geometry even when the width wait fails. CI uploads only direct test-output PNG/JSON/error context, not disposable browser profiles. All other cases remain headless. No skips, retries, assertion tolerances, production code, permissions, dependencies or SECURITY.md changes.
+
+Final serial `npm run package` passes strict TypeScript, **492 unit/integration tests in 31 files**, one build, **all 21 Playwright scenarios (1.6m)** and one ZIP on macOS. The headed native case also passed three independent repetitions (27.5s), covering both first open and reopen at 400×600px; its screenshot was visually reviewed. CI YAML parsed successfully; archive integrity passes and all **23 files** byte-match dist. SHA-256: `ddcc131d80e684ab9160ea2ed29d34073ab198cda35a454dc1fe2f9b3e4f2f53`. Artifact: artifacts/agentguard-0.1.0.zip. Scoped diff/whitespace reviewed. **Ubuntu CI must still be rerun**: the new environment is not proven on Linux by local macOS results. No commits, pushes or live Chrome-profile changes. Broader roadmap below remains unfinished.
+
+## Previous checkpoint — 2026-10-18: behavioral false positives
 
 User explicitly requested removing behavioral false-positive detection everywhere. This scoped fix is complete. Regular scrolls/page-script clicks no longer produce the former 0.18/0.16 suspicion or inflate real scores. Behavior is activity-only; legacy/crafted behavioral indicators are excluded from scoring, new behavioral-only positive session observations and restored tab labels/policies are rejected, and worker-restored behavioral-only active sessions are retired. History/audit and quarantine records are retained, not silently deleted/released. Real runtime/debugger signals, coverage warnings, one build, Orbit Pointer branding, 400px popup and all earlier dirty work remain intact.
 

@@ -23,9 +23,10 @@ async function recordedTab(page: Page, tabId: number, matches: (tab: TabAgentSta
   return observed!;
 }
 
-async function openExtension(path = resolve('dist'), profile = ''): Promise<{ context: BrowserContext; options: Page; extensionId: string }> {
+async function openExtension(path = resolve('dist'), profile = '', mode: 'headless' | 'headed' = 'headless'): Promise<{ context: BrowserContext; options: Page; extensionId: string }> {
   const context = await chromium.launchPersistentContext(profile, {
-    channel: 'chromium', headless: true,
+    channel: 'chromium', headless: mode === 'headless',
+    ...(mode === 'headed' ? { viewport: null } : {}),
     args: [`--disable-extensions-except=${path}`, `--load-extension=${path}`, '--enable-unsafe-extension-debugging'],
   });
   try {
@@ -1119,7 +1120,9 @@ test('dark UI stays readable, aligned and keyboard-accessible across desktop, na
 });
 
 test('native toolbar popup keeps its 400px width and scrolls vertically on first open and reopen', async ({}, testInfo) => {
-  const { context, options, extensionId } = await openExtension();
+  // Native browser-chrome geometry needs a real display, not the headless window
+  // implementation. Linux CI supplies Xvfb; do not emulate this popup's viewport.
+  const { context, options, extensionId } = await openExtension(resolve('dist'), '', 'headed');
   try {
     const browser = await context.browser()!.newBrowserCDPSession();
     const inspectedTargets = new Set<string>();
@@ -1156,9 +1159,7 @@ test('native toolbar popup keeps its 400px width and scrolls vertically on first
       // on reopen. Wait for real frames, not a forced viewport or an arbitrary sleep.
       await expect.poll(() => evaluate<boolean>('innerHeight >= 480')).toBe(true);
       await command('Runtime.evaluate', { expression: 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))', awaitPromise: true });
-      const screenshot = await command<{ data: string }>('Page.captureScreenshot', { captureBeyondViewport: false });
-      await writeFile(testInfo.outputPath(`native-popup-${opening}.png`), Buffer.from(screenshot.data, 'base64'));
-      const size = await evaluate<{ viewport: number; shell: number; height: number; horizontalOverflow: boolean; canScroll: boolean; headerFits: boolean }>(`(() => {
+      const measure = () => evaluate<{ viewport: number; shell: number; height: number; horizontalOverflow: boolean; canScroll: boolean; headerFits: boolean }>(`(() => {
         const shell = document.querySelector('.popup-shell').getBoundingClientRect();
         const brand = document.querySelector('.popup-header .brand').getBoundingClientRect();
         const settings = document.querySelector('.popup-header button').getBoundingClientRect();
@@ -1167,6 +1168,17 @@ test('native toolbar popup keeps its 400px width and scrolls vertically on first
           canScroll: document.documentElement.scrollHeight > innerHeight,
           headerFits: settings.left > brand.right && settings.right <= innerWidth };
       })()`);
+      try {
+        await expect.poll(measure, { message: 'Native popup must finish auto-sizing to 400px' }).toMatchObject({ viewport: 400, shell: 400 });
+      } finally {
+        // Save the actual failed measurement too; CI must not upload the browser profile.
+        await writeFile(testInfo.outputPath(`native-popup-${opening}.json`), JSON.stringify({
+          platform: process.platform, browserVersion: context.browser()!.version(), geometry: await measure(),
+        }, null, 2));
+        const screenshot = await command<{ data: string }>('Page.captureScreenshot', { captureBeyondViewport: false });
+        await writeFile(testInfo.outputPath(`native-popup-${opening}.png`), Buffer.from(screenshot.data, 'base64'));
+      }
+      const size = await measure();
       expect(size.viewport).toBe(400);
       expect(size.shell).toBe(400);
       expect(size.height).toBeGreaterThanOrEqual(480);

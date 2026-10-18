@@ -1,5 +1,14 @@
 # Module acceptance and test plan
 
+## Native popup CI environment (2026-10-19)
+
+- Exercise the real first-open/reopened action popup in headed Chromium without viewport emulation; Linux CI supplies a display via Xvfb. Keep the other functional/layout scenarios headless.
+- Retain exact 400px viewport/shell, 480–600px height, no horizontal overflow, aligned header, vertical footer scrolling, distinct targets and confirmed target teardown. Wait for full native geometry, not only React mount or minimum height. No test skips, wider tolerances or retries.
+- Preserve native screenshot and measured geometry on assertion failure; CI uploads only diagnostic PNG/JSON/error context, never disposable browser profiles.
+- Leave production styling, detection, permissions and packaging unchanged. Run focused repetitions, strict TypeScript, full unit/integration/browser suite and the single ZIP build. Report macOS results separately from the still-required Ubuntu rerun.
+
+Local verification: strict TypeScript, **492 unit/integration tests in 31 files**, one build and **all 21 Playwright cases (1.6m)** pass through `npm run package` on macOS. The headed native case also passed three repeated runs (27.5s), measuring 400×600px on first open and reopen with no overflow and working footer scrolling. Native screenshot and CI YAML were reviewed; ZIP integrity and all **23 archived-file byte comparisons** pass. No assertions were relaxed and no cases skipped. The original Ubuntu geometry cause remains unreproduced locally; **the headed/Xvfb CI change still requires an Ubuntu rerun**. No production code or permission changes.
+
 ## Behavioral false-positive removal (2026-10-18)
 
 - Regular scrolling, repetitive clicks and page-script events alone never produce positive automation states, detection scores, red automation icons, in-page/desktop notices, new observation sessions or automatic policy/emergency containment. Activity counters remain bounded context, not controller evidence.
