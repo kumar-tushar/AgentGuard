@@ -17,6 +17,21 @@ function memory(initial: unknown = undefined) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('passive debugger target intelligence', () => {
+  it('associates a newly identifiable tab domain without fabricating a new attachment sample', async () => {
+    const { port } = memory();
+    let now = START;
+    const store = new DebuggerIntelligenceStore(port, { now: () => now });
+    await store.reconcile(capture(), new Map());
+    const before = store.snapshot().targets[0]!;
+    now += 1000;
+    await store.associateDomain(1, 'example.com');
+    expect(store.snapshot().targets[0]).toMatchObject({ domain: 'example.com', lastSeen: before.lastSeen,
+      sampledAttachmentSpanMs: before.sampledAttachmentSpanMs, timeline: before.timeline });
+    now += DEBUGGER_OBSERVATION_TTL_MS;
+    await store.associateDomain(1, 'next.example');
+    expect(store.snapshot().targets[0]).toMatchObject({ currentAttached: null, observationFresh: false, lastSeen: START });
+    await expect(store.associateDomain(1, 'https://private.example/path?token=secret')).rejects.toThrow();
+  });
   it('records sampled attachment lifecycle with unknown owner and no Chrome calls', async () => {
     const chromeCalls = { getTargets: vi.fn(), attach: vi.fn(), sendCommand: vi.fn() };
     vi.stubGlobal('chrome', { debugger: chromeCalls });

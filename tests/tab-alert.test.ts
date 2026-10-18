@@ -34,6 +34,8 @@ describe('isolated top-right tab alert', () => {
     expect(container()!.style.right).toBe('16px');
     expect(container()!.style.maxWidth).toBe('calc(100vw - 32px)');
     expect(shadow.textContent).toContain('Controller identity unverified.');
+    expect(shadow.querySelector('style')?.textContent).toContain('background:#141b25');
+    expect(shadow.querySelector('style')?.textContent).toContain('outline:3px solid #63dbb2');
     expect(shadow.textContent).toContain('example.com · Tab 1');
     expect(shadow.textContent).not.toMatch(/Click to hide|24 hours/);
     expect(host.getAttribute('aria-label')).toContain('Switch to tab 1.');

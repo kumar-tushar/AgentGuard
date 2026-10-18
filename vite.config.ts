@@ -8,6 +8,12 @@ import { installSensor } from './src/content/sensor.ts';
 export default defineConfig({
   plugins: [react(), {
     name: 'agentguard-manifest',
+    transformIndexHtml: {
+      order: 'post',
+      handler() {
+        return [{ tag: 'link', attrs: { rel: 'icon', type: 'image/png', sizes: '32x32', href: './icons/icon-32.png' }, injectTo: 'head' }];
+      },
+    },
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: 'manifest.json', source: JSON.stringify(createManifest(), null, 2) });
       // Manifest content scripts are classic scripts, not shared ESM chunks.

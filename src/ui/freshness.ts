@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { TabAgentStatus } from '../shared/contracts';
-
-function deadline(assessment: TabAgentStatus): number {
-  return Math.min(assessment.expiresAt, ...assessment.evidence.map((item) => item.expiresAt));
-}
+import { assessmentDeadline } from '../detection/evidence';
 
 /** Expire cached views even when an open UI receives no new background response. */
 export function useCurrentAssessments(assessments: readonly TabAgentStatus[]): TabAgentStatus[] {
   const [lastTick, setLastTick] = useState(Date.now);
   const now = Math.max(lastTick, Date.now());
-  const nextExpiry = Math.min(...assessments.map(deadline).filter((expiresAt) => expiresAt > now));
+  const nextExpiry = Math.min(...assessments.flatMap(assessment =>
+    [assessmentDeadline(assessment), ...assessment.evidence.map(item => item.expiresAt)]).filter(expiresAt => expiresAt > now));
 
   useEffect(() => {
     const tick = () => setLastTick(Date.now());
@@ -24,7 +22,10 @@ export function useCurrentAssessments(assessments: readonly TabAgentStatus[]): T
   }, [nextExpiry]);
 
   return assessments.map((assessment) => {
-    if (deadline(assessment) > now) return assessment;
+    if (assessmentDeadline(assessment) > now) {
+      const evidence = assessment.evidence.filter(item => item.expiresAt > now);
+      return evidence.length === assessment.evidence.length ? assessment : { ...assessment, evidence };
+    }
     const reason = 'Assessment expired. Awaiting new automatic monitoring evidence.';
     return {
       ...assessment,

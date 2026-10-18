@@ -1,10 +1,16 @@
 import type { AgentSession, ControlState, DebuggerIntelligenceView, SessionReport } from './intelligence';
+import type { BrowserStatistics, SessionSummaryReport } from './reports';
+import type { EmergencyState } from './emergency';
+import type { ActionCapability, ControlsView, GrantPreset, OneTimeAllowance } from './controls';
+import type { PendingUpdate } from './updates';
+import type { DownloadPolicy, DownloadRecord, TrafficView } from './traffic';
+import type { SiteDeclaration, TrustLookup, TrustProvider } from './integrations';
 /** Scores are heuristic support, never a probability or proof of AI control. */
 export type TabState = ControlState;
 export type DetectorId = 'webdriver' | 'fingerprint' | 'debugger' | 'behavior';
 export type SignalFamily = 'runtime' | 'debugger' | 'behavior';
 export type Availability = 'available' | 'unavailable' | 'error';
-export type Fingerprint = 'playwright-binding' | 'playwright-init' | 'selenium-global' | 'webdriver-global';
+export type Fingerprint = 'playwright-binding' | 'playwright-init' | 'selenium-global' | 'webdriver-global' | 'playwright-stack' | 'puppeteer-stack';
 export type EvidenceMetadata = Readonly<Record<string, string | number | boolean>>;
 
 export interface DetectionEvidence {
@@ -76,6 +82,7 @@ export interface PolicyDecision {
 export interface AgentGuardConfig {
   schemaVersion: 1;
   monitoringEnabled: boolean;
+  /** Coarse activity context/counters only; never automation detection or scoring. */
   behaviorEnabled: boolean;
   policyMode: 'monitor' | 'warn' | 'block';
   sensitiveDomains: string[];
@@ -84,6 +91,18 @@ export interface AgentGuardConfig {
   maxAuditEvents: number;
   sessionRetentionDays: number;
   maxHistorySessions: number;
+  employeeControlsAllowed?: boolean;
+  maximumGrantMinutes?: number;
+  observationAllowed?: boolean;
+  downloadPolicy?: DownloadPolicy;
+  desktopNotifications?: boolean;
+  stackSignalsEnabled?: boolean;
+  trustLookupEnabled?: boolean;
+  trustEndpoint?: string | null;
+  trustProvider?: TrustProvider;
+  siteDeclarationsEnabled?: boolean;
+  contributionsEnabled?: boolean;
+  contributionEndpoint?: string | null;
 }
 export interface EffectiveConfig {
   values: AgentGuardConfig;
@@ -117,6 +136,10 @@ export interface QuarantineRecord {
   reason: string;
   networkBlocked: boolean;
 }
+export interface ReleaseResult {
+  /** A request is not a guarantee that the destination finished loading. */
+  navigation: 'requested' | 'not_needed' | 'unavailable';
+}
 export interface Capabilities {
   /** Successful passive target inspection, not just a declared permission; individual tabs may remain unavailable. */
   debugger: boolean;
@@ -132,6 +155,13 @@ export interface Dashboard {
   healthErrors: string[];
   sessions: AgentSession[];
   debuggerIntelligence: DebuggerIntelligenceView;
+  statistics?: BrowserStatistics;
+  emergency?: EmergencyState;
+  controls?: ControlsView;
+  delegationNetworkTabs?: number[];
+  pendingUpdate?: PendingUpdate | null;
+  traffic?: TrafficView;
+  downloads?: DownloadRecord[];
 }
 export type Request =
   | { type: 'GET_DASHBOARD' }
@@ -143,17 +173,45 @@ export type Request =
   | { type: 'CLEAR_AUDIT' }
   | { type: 'GET_SESSION_HISTORY' }
   | { type: 'EXPORT_SESSIONS' }
-  | { type: 'CLEAR_SESSION_HISTORY' };
+  | { type: 'CLEAR_SESSION_HISTORY' }
+  | { type: 'GET_SESSION_REPORT'; sessionId: string }
+  | { type: 'EMERGENCY_ACTIVATE'; action: 'quarantine' | 'close' }
+  | { type: 'EMERGENCY_RESET' }
+  | { type: 'GRANT_DELEGATION'; tabId: number; preset: GrantPreset; allowedDomains: string[]; blockedDomains: string[]; minutes: number }
+  | { type: 'REVOKE_DELEGATION'; tabId: number }
+  | { type: 'PAUSE_CONTROLS'; domain: string | null; minutes: number }
+  | { type: 'RESUME_CONTROLS'; pauseId: string }
+  | { type: 'APPLY_UPDATE' }
+  | { type: 'GRANT_ONCE'; tabId: number; capability: ActionCapability }
+  | { type: 'START_OBSERVATION' | 'STOP_OBSERVATION'; tabId: number }
+  | { type: 'CLEAR_TRAFFIC' }
+  | { type: 'LOOKUP_TRUST' | 'LOOKUP_SITE_DECLARATION'; tabId: number }
+  | { type: 'CONTRIBUTE_STATISTICS'; consent: true };
 export interface ResponseData {
   GET_DASHBOARD: Dashboard;
   SAVE_CONFIG: EffectiveConfig;
   QUARANTINE_TAB: QuarantineRecord;
-  RELEASE_TAB: null;
+  RELEASE_TAB: ReleaseResult;
   CLOSE_TAB: null;
   EXPORT_AUDIT: AuditEnvelope;
   CLEAR_AUDIT: null;
   GET_SESSION_HISTORY: AgentSession[];
   EXPORT_SESSIONS: SessionReport;
   CLEAR_SESSION_HISTORY: null;
+  GET_SESSION_REPORT: SessionSummaryReport;
+  EMERGENCY_ACTIVATE: EmergencyState;
+  EMERGENCY_RESET: EmergencyState;
+  GRANT_DELEGATION: ControlsView;
+  REVOKE_DELEGATION: ControlsView;
+  PAUSE_CONTROLS: ControlsView;
+  RESUME_CONTROLS: ControlsView;
+  APPLY_UPDATE: boolean;
+  GRANT_ONCE: OneTimeAllowance;
+  START_OBSERVATION: TrafficView;
+  STOP_OBSERVATION: TrafficView;
+  CLEAR_TRAFFIC: null;
+  LOOKUP_TRUST: TrustLookup[];
+  LOOKUP_SITE_DECLARATION: SiteDeclaration;
+  CONTRIBUTE_STATISTICS: null;
 }
 export type Response<T> = { ok: true; data: T } | { ok: false; error: string };

@@ -168,6 +168,20 @@ export class DebuggerIntelligenceStore {
     });
   }
 
+  /** Domain association is not a new attachment sample and never renews coverage. */
+  associateDomain(id: number, hostname: string | null): Promise<void> {
+    if (!tabId(id) || !domain(hostname)) return Promise.reject(new Error('Invalid debugger domain association'));
+    return this.serialize(async () => {
+      let changed = false;
+      for (const target of this.data.targets) {
+        if (target.tabId === id && target.disappearedAt === null && target.domain !== hostname) {
+          target.domain = hostname; changed = true;
+        }
+      }
+      if (changed || this.dirty) await this.persist();
+    });
+  }
+
   snapshot(now = this.now()): DebuggerIntelligenceView {
     if (!timestamp(now)) throw new Error('Invalid debugger observation clock');
     const coverageAvailable = this.data.coverageAvailable && this.data.lastCapturedAt !== null &&

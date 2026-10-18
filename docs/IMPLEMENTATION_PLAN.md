@@ -4,18 +4,18 @@ Planning baseline: empty repository; architecture, permissions, shared contracts
 
 1. Scaffold strict TypeScript, React/Vite MV3 entry points, one manifest with required debugger permission, managed schema, test/build commands and CI.
 2. Implement data contracts, validation and canonical hostname matching.
-3. Implement independent detector modules, bounded runtime/behavior probes, coverage handling, family-based confidence and conservative framework identification. Test each detector and scoring invariants.
+3. Implement independent detector modules, bounded runtime/activity probes, coverage handling, runtime/debugger family-based confidence and conservative framework identification. Behavior is context only, never automation evidence or a control-score contribution. Test each detector and scoring invariants, including independent activity/control expiry.
 4. Implement validated local/managed settings, pure policy decisions and bounded serialized audit persistence. Test malformed config, precedence, retention and domain suffix attacks.
 5. Implement worker lifecycle, per-tab scan coordination, stale-result rejection, permission changes, alarms, session persistence and UI-only typed messaging.
 6. Implement real emergency containment and release with optional session DNR, tab close and explicit enforcement outcomes; test partial failures and restart cleanup.
-7. Implement employee popup, administrator settings/audit views and quarantined-tab UI with accessible states, uncertainty, evidence, permission controls and export.
+7. Implement user popup, administrator settings/audit views and quarantined-tab UI with accessible states, uncertainty, evidence, permission controls and export.
 8. Run strict type checks, unit/integration tests, the single dist/ build, real unpacked Chromium smoke tests and review the complete diff. Package one extension ZIP. Document deployment commands, manual platform checks and residual limitations.
 
 No fake detectors, telemetry data, backend connections or hidden test skips. Any Chrome limitation stays visible in both docs and UI. Implementation discoveries update ARCHITECTURE.md and acceptance status.
 
 The completed single-extension migration removed edition-specific builds and enables enterprise behavior through managed configuration. Preserve detector, scoring, policy, audit and UI boundaries; failed debugger access must report reduced coverage and never human/safe. See ACCEPTANCE.md for validation and environment-specific release checks.
 
-## Employee alert follow-up (2026-10-12)
+## User alert follow-up (2026-10-12)
 
 Refinement 2026-10-13: all toolbar overlays removed; stacked notifications now aggregate fresh unmuted sources onto each window's active accessible tab. Clicking switches to the existing source and focuses its window before saving its 24-hour mute. Remove the visible dismissal hint, preserve domain privacy in closed shadow content, validate host/source documents and issued tokens, expire cards independently, and test multi-window selection and per-source mute scope. Final `npm run package` passes TypeScript, 427 unit/integration tests, ten browser scenarios (47.4s), one build and one ZIP. Screenshot and archive integrity verified.
 

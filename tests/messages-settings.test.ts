@@ -20,6 +20,8 @@ describe('privileged message boundary', () => {
       { type: 'SCAN_TAB', tabId: NaN }, { type: 'SCAN_TAB', tabId: 1.2 },
       { type: 'QUARANTINE_TAB', tabId: 4, url: 'https://forged.example' },
       { type: 'SAVE_CONFIG', config: { ...DEFAULT_CONFIG, minimumConfidence: 0 } },
+      { type: 'GRANT_ONCE', tabId: 1, capability: { toString: () => 'click' } },
+      { type: 'SAVE_CONFIG', config: { ...DEFAULT_CONFIG, downloadPolicy: { toString: () => 'off' } } },
     ]) expect(() => parseRequest(input)).toThrow();
     expect(parseRequest({ type: 'QUARANTINE_TAB', tabId: 1 })).toEqual({ type: 'QUARANTINE_TAB', tabId: 1 });
     expect(() => parseRequest({ type: 'SCAN_TAB', tabId: 1 })).toThrow();
@@ -53,7 +55,7 @@ describe('single extension manifest', () => {
     expect(manifest.manifest_version).toBe(3);
     expect(manifest.name).toBe('AgentGuard');
     expect(manifest.permissions).toEqual(['storage', 'scripting', 'alarms', 'debugger', 'webNavigation']);
-    expect(manifest.optional_permissions).toEqual(['declarativeNetRequestWithHostAccess']);
+    expect(manifest.optional_permissions).toEqual(['declarativeNetRequestWithHostAccess', 'downloads', 'notifications']);
     expect(manifest.host_permissions).toEqual(['https://*/*', 'http://*/*']);
     expect(manifest.optional_host_permissions).toBeUndefined();
     expect(manifest.content_scripts).toEqual([{ matches: ['https://*/*', 'http://*/*'], js: ['sensor.js'], run_at: 'document_start', world: 'ISOLATED', all_frames: false }]);

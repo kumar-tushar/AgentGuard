@@ -1,6 +1,7 @@
 import type { AgentGuardConfig, DetectionContext, TabAgentStatus } from '../shared/contracts';
 import { domainFromUrl } from '../shared/domains';
 import { assess } from '../detection/engine';
+import { assessmentDeadline } from '../detection/evidence';
 import { evaluatePolicy } from '../policy/evaluate';
 import type { SessionStore } from './session';
 import { hasAutomation } from '../shared/intelligence';
@@ -118,7 +119,7 @@ export class TabMonitor {
         const previous = this.store.tabs.get(tabId);
         next = {
           ...next, ...result,
-          expiresAt: Math.min(now + 90_000, ...result.evidence.map((item) => item.expiresAt)),
+          expiresAt: assessmentDeadline({ expiresAt: now + 90_000, evidence: result.evidence }),
           firstDetectedAt: positive ? (previous?.domain === domain && previous.expiresAt > now ? previous.firstDetectedAt : null) ?? now : null,
           lastDetectedAt: positive ? now : null,
         };
@@ -165,7 +166,14 @@ export class TabMonitor {
   async expire(now = Date.now()): Promise<void> {
     let changed = false;
     for (const [tabId, tab] of this.store.tabs) {
-      if (tab.expiresAt > now && tab.evidence.every((item) => item.expiresAt > now)) continue;
+      if (assessmentDeadline(tab) > now) {
+        const evidence = tab.evidence.filter(item => item.expiresAt > now);
+        if (evidence.length !== tab.evidence.length) {
+          this.store.tabs.set(tabId, { ...tab, evidence });
+          changed = true;
+        }
+        continue;
+      }
       const reason = this.store.quarantines.has(tabId)
         ? 'Tab quarantined; prior observation expired.'
         : 'Evidence expired; awaiting automatic observation.';
@@ -176,7 +184,7 @@ export class TabMonitor {
   }
 
   snapshot(now = Date.now()): TabAgentStatus[] {
-    return [...this.store.tabs.values()].map((tab) => now >= tab.expiresAt || tab.evidence.some((item) => item.expiresAt <= now)
+    return [...this.store.tabs.values()].map((tab) => assessmentDeadline(tab) <= now
       ? unknownStatus(tab.tabId, tab.domain, this.store.quarantines.has(tab.tabId)
         ? 'Tab quarantined; prior observation expired.' : 'Evidence expired; awaiting automatic observation.', now)
       : tab);

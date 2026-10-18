@@ -1,5 +1,6 @@
 import type { DetectionContext, DetectionEvidence, DetectorCoverage, SignalFamily, TabState } from '../shared/contracts';
 import { identifyAgent } from './identity';
+import { isAutomationEvidence } from './evidence';
 
 export interface ScoredAssessment {
   status: TabState;
@@ -21,8 +22,9 @@ export function scoreAssessment(
     Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1 &&
     Number.isFinite(item.observedAt) && item.observedAt <= context.now &&
     Number.isFinite(item.expiresAt) && item.expiresAt > context.now,
-  );
-  const automation = current.filter(item => item.metadata.signal === 'automation-indicator');
+  ).filter(item => isAutomationEvidence(item) ||
+    (item.detector === 'behavior' && item.family === 'behavior' && item.metadata.signal === 'trusted-activity'));
+  const automation = current.filter(isAutomationEvidence);
   const familyMaximums: Record<SignalFamily, number> = { runtime: 0, debugger: 0, behavior: 0 };
   for (const item of automation) familyMaximums[item.family] = Math.max(familyMaximums[item.family], item.confidence);
   const combined = 1 - Object.values(familyMaximums).reduce((remaining, score) => remaining * (1 - score), 1);

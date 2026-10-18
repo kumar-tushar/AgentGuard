@@ -9,6 +9,9 @@ import { Options } from '../src/ui/options';
 import { Blocked } from '../src/ui/blocked';
 import { DebuggerHistory } from '../src/ui/debugger-history';
 import type { DebuggerIntelligenceView } from '../src/shared/intelligence';
+import { TrafficControls } from '../src/ui/traffic';
+import { Integrations } from '../src/ui/integrations';
+import { EmergencyControls } from '../src/ui/emergency';
 
 const config: AgentGuardConfig = {
   schemaVersion: 1,
@@ -78,7 +81,8 @@ function mockChrome(currentDashboard = dashboard(), sessionHistory: AgentSession
     if (request.type === 'GET_SESSION_HISTORY') return { ok: true, data: structuredClone(sessionHistory) };
     if (request.type === 'EXPORT_SESSIONS') return { ok: true, data: { schemaVersion: 1, exportedAt: Date.now(), source: 'agentguard-extension', sessions: structuredClone(currentDashboard.sessions), history: structuredClone(sessionHistory) } };
     if (request.type === 'CLEAR_SESSION_HISTORY') { sessionHistory = []; return { ok: true, data: null }; }
-    if (request.type === 'RELEASE_TAB' || request.type === 'CLOSE_TAB' || request.type === 'CLEAR_AUDIT') return { ok: true, data: null };
+    if (request.type === 'RELEASE_TAB') return { ok: true, data: { navigation: 'requested' } };
+    if (request.type === 'CLOSE_TAB' || request.type === 'CLEAR_AUDIT') return { ok: true, data: null };
     if (request.type === 'SAVE_CONFIG') return { ok: true, data: currentDashboard.config };
     if (request.type === 'EXPORT_AUDIT') return { ok: true, data: { schemaVersion: 1, exportedAt: Date.now(), source: 'agentguard-extension', events: [] } };
     if (request.type === 'QUARANTINE_TAB') return { ok: true, data: { tabId: 7, domain: 'example.com', createdAt: Date.now(), reason: 'Manual', networkBlocked: false } };
@@ -87,7 +91,7 @@ function mockChrome(currentDashboard = dashboard(), sessionHistory: AgentSession
   const request = vi.fn(async () => true);
   const getAll = vi.fn(async (): Promise<chrome.permissions.Permissions> => ({ origins: [], permissions: [] }));
   vi.stubGlobal('chrome', {
-    runtime: { id: 'agentguard-test', sendMessage, openOptionsPage: vi.fn() },
+    runtime: { id: 'agentguard-test', sendMessage, openOptionsPage: vi.fn(), getURL: (path: string) => `chrome-extension://agentguard-test/${path}`, onMessage: { addListener: vi.fn(), removeListener: vi.fn() } },
     tabs: { query: vi.fn(async () => [{ id: 7 }]), getCurrent: vi.fn(async () => ({ id: 7 })), create: vi.fn(async () => ({ id: 8 })) },
     permissions: { getAll, request, remove: vi.fn(async () => true) },
   });
@@ -97,7 +101,52 @@ function mockChrome(currentDashboard = dashboard(), sessionHistory: AgentSession
 beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-describe('employee assessment', () => {
+describe('optional parity controls', () => {
+  it('does not request permissions or contact services just by opening their UI', () => {
+    const mock = mockChrome(); const current = dashboard();
+    render(<><TrafficControls dashboard={current} tabs={current.tabs} onChanged={() => undefined} /><Integrations dashboard={current} tabs={current.tabs} onChanged={() => undefined} /></>);
+    expect(mock.request).not.toHaveBeenCalled(); expect(mock.sendMessage).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Look up framework types' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Send aggregate contribution once' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('requires explicit confirmation before enabling browser-wide download cancellation', async () => {
+    const mock = mockChrome(); const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false), current = dashboard();
+    render(<TrafficControls dashboard={current} tabs={current.tabs} onChanged={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Block ALL browser downloads' }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(mock.request).not.toHaveBeenCalled(); expect(mock.sendMessage).not.toHaveBeenCalled();
+  });
+  it('requests notification permission from the click before saving settings and respects managed locks', async () => {
+    const mock = mockChrome(); const current = dashboard();
+    const view = render(<TrafficControls dashboard={current} tabs={current.tabs} onChanged={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Enable desktop alerts' }));
+    await waitFor(() => expect(mock.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SAVE_CONFIG', config: expect.objectContaining({ desktopNotifications: true }) })));
+    expect(mock.request).toHaveBeenCalledWith({ permissions: ['notifications'] });
+    expect(mock.request.mock.invocationCallOrder[0]).toBeLessThan(mock.sendMessage.mock.invocationCallOrder[0]!);
+    view.rerender(<TrafficControls dashboard={{ ...current, config: { ...current.config, managedKeys: ['desktopNotifications'] } }} tabs={current.tabs} onChanged={() => undefined} />);
+    expect((screen.getByRole('button', { name: 'Enable desktop alerts' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('shows incomplete emergency revocation and unconfirmed outcomes without claiming a successful stop', () => {
+    mockChrome(); render(<EmergencyControls state={{ schemaVersion: 1, active: true, activatedAt: Date.now(), grantsRevoked: false, outcomes: [{ tabId: 7, domain: 'example.com', action: 'quarantine', result: 'failed', timestamp: Date.now() }] }} onChanged={() => undefined} />);
+    expect(screen.getByText(/Delegation cleanup was not confirmed/)).toBeTruthy();
+    expect(screen.getByText(/quarantine: not confirmed/)).toBeTruthy();
+  });
+});
+
+describe('user assessment', () => {
+  it('puts the current-tab answer and controls before supporting detail and browser-wide totals', async () => {
+    mockChrome(); render(<Popup />);
+    await screen.findByRole('heading', { name: 'Automation suspected' });
+    const current = screen.getByRole('region', { name: 'Current tab assessment' });
+    const controls = screen.getByRole('region', { name: 'Tab controls' });
+    const evidence = screen.getByRole('heading', { name: 'Supporting evidence' });
+    const browser = screen.getByRole('region', { name: 'Browser-wide summary' });
+    expect(current.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(controls.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(evidence.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const settings = screen.getByRole('button', { name: /^Settings$/ });
+    expect(settings.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+  });
   it.each([
     ['NO_AUTOMATION_OBSERVED', 'No automation observed'],
     ['AGENT_ACTIVE', 'Automation active'],
@@ -121,6 +170,8 @@ describe('employee assessment', () => {
     expect(screen.queryByRole('button', { name: /scan/i })).toBeNull();
     expect(screen.getByText('Reduced coverage: debugger access restricted by Chrome or organization policy')).toBeTruthy();
     expect(screen.getByText(/This does not stop external automation|not the external controller/i)).toBeTruthy();
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-alert-128.png');
+    expect(document.querySelector('.brand-mark')?.getAttribute('alt')).toBe('');
   });
 
   it('never presents a cached score as current when the monitoring data request fails', async () => {
@@ -142,6 +193,7 @@ describe('employee assessment', () => {
     expect(screen.getByRole('heading', { name: 'Automation suspected' })).toBeTruthy();
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(screen.getByRole('heading', { name: 'Unmonitored' })).toBeTruthy();
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-128.png');
     expect(screen.queryByText('WebDriver flag observed')).toBeNull();
     expect(screen.queryByText(/Unverified framework hints/)).toBeNull();
     expect(screen.getByRole('meter').getAttribute('aria-valuenow')).toBe('0');
@@ -173,17 +225,21 @@ describe('employee assessment', () => {
     await screen.findByText('No stored tab assessments yet.');
     expect(screen.getByRole('heading', { name: 'Unmonitored' })).toBeTruthy();
     expect(screen.getByText(/This does not mean the tab is safe/)).toBeTruthy();
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-128.png');
     expect(sendMessage.mock.calls.map(([request]) => request)).toEqual([{ type: 'GET_DASHBOARD' }]);
   });
 
-  it('expires a classification as soon as supporting behavioral evidence expires', async () => {
+  it('expires activity context without misreporting the runtime/debugger assessment as expired', async () => {
     vi.useFakeTimers();
     const current = assessment('NO_AUTOMATION_OBSERVED');
     current.evidence[0] = { detector: 'behavior', family: 'behavior', confidence: 0.5, description: 'Recent trusted activity observed', metadata: { signal: 'trusted-activity' }, observedAt: Date.now(), expiresAt: Date.now() + 30_000 };
     render(<TabAssessment assessment={current} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(screen.getByRole('heading', { name: 'Unmonitored' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'No automation observed' })).toBeTruthy();
     expect(screen.queryByText('Recent trusted activity observed')).toBeNull();
+    expect(screen.queryByText(/Assessment expired/)).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(screen.getByRole('heading', { name: 'Unmonitored' })).toBeTruthy();
   });
 
   it('removes the previous document assessment after manual quarantine', async () => {
@@ -229,13 +285,13 @@ describe('employee assessment', () => {
     expect((screen.getByRole('button', { name: 'Close tab' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('releases an existing quarantine without restoring the prior assessment or URL', async () => {
+  it('releases an existing quarantine and requests the previous page without restoring a stale assessment', async () => {
     const current = dashboard();
     current.quarantines = [{ tabId: 7, domain: 'example.com', createdAt: Date.now(), reason: 'Manual', networkBlocked: false }];
     const { sendMessage } = mockChrome(current);
     render(<Popup />);
     fireEvent.click(await screen.findByRole('button', { name: 'Release tab' }));
-    await screen.findByText('Containment released. The original page was not restored.');
+    await screen.findByText('Containment released. Returning to the previous page.');
     expect(sendMessage).toHaveBeenCalledWith({ type: 'RELEASE_TAB', tabId: 7 });
     expect(screen.queryByRole('heading', { name: 'Automation suspected' })).toBeNull();
   });
@@ -341,7 +397,8 @@ describe('local console', () => {
     mockChrome();
     render(<Options />);
     await screen.findByRole('heading', { name: 'Browser overview' });
-    expect(screen.getByText(/No organization-wide agent inventory/)).toBeTruthy();
+    expect(await screen.findByText(/No organization-wide agent inventory/)).toBeTruthy();
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-128.png');
   });
 });
 
@@ -544,6 +601,7 @@ describe('quarantine page', () => {
     expect(screen.queryByRole('heading', { name: 'This tab is quarantined' })).toBeNull();
     await screen.findByRole('heading', { name: 'Containment not confirmed' });
     expect(screen.queryByRole('button', { name: 'Release this tab' })).toBeNull();
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-128.png');
     expect(screen.getByText(/No active quarantine record was found/)).toBeTruthy();
   });
 
@@ -555,15 +613,35 @@ describe('quarantine page', () => {
     expect(screen.getByRole('alert').textContent).toBe('Status unavailable');
   });
 
-  it('shows the actual record and does not restore the original URL on release', async () => {
+  it('shows the actual record and returns through Chrome history on release', async () => {
     const current = dashboard();
     current.quarantines = [{ tabId: 7, domain: 'example.com', createdAt: 1_700_000_000_000, reason: 'Policy threshold', networkBlocked: false }];
     const { sendMessage } = mockChrome(current);
     render(<Blocked />);
     await screen.findByRole('heading', { name: 'This tab is quarantined' });
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-alert-128.png');
     fireEvent.click(screen.getByRole('button', { name: 'Release this tab' }));
     await screen.findByRole('heading', { name: 'Containment released' });
+    expect(document.querySelector('.brand-mark')?.getAttribute('src')).toBe('./icons/icon-128.png');
     expect(sendMessage).toHaveBeenCalledWith({ type: 'RELEASE_TAB', tabId: 7 });
-    expect(screen.getByText(/not stored or restored/)).toBeTruthy();
+    expect(screen.getByText(/Returning to the previous page using Chrome navigation history/)).toBeTruthy();
+  });
+  it('offers a return action for a previously released containment page and explains missing history', async () => {
+    const { sendMessage } = mockChrome();
+    render(<Blocked />);
+    await screen.findByRole('heading', { name: 'Containment not confirmed' });
+    sendMessage.mockResolvedValue({ ok: true, data: { navigation: 'unavailable' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Return to previous page' }));
+    await screen.findByRole('heading', { name: 'Containment released' });
+    expect(screen.getByText(/Chrome could not return to the previous page/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Return to previous page' })).toBeTruthy();
+    expect(sendMessage).toHaveBeenLastCalledWith({ type: 'RELEASE_TAB', tabId: 7 });
+  });
+  it('uses User in legacy saved quarantine reasons as well as newly generated copy', async () => {
+    const current = dashboard();
+    current.quarantines = [{ tabId: 7, domain: 'example.com', createdAt: Date.now(), reason: 'Employee requested emergency quarantine.', networkBlocked: false }];
+    mockChrome(current); render(<Blocked />);
+    await screen.findByText('User requested emergency quarantine.');
+    expect(screen.queryByText('Employee requested emergency quarantine.')).toBeNull();
   });
 });

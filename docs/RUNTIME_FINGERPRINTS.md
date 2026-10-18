@@ -4,12 +4,14 @@ The packaged registry is `src/shared/fingerprints.ts`, version 1. It drives the 
 
 Only existence of seven fixed own-property names is checked. Values, getters, arbitrary property lists, DOM content and source strings are not read. Multiple aliases produce one evidence ID. All four existing weights and IDs are retained; the newer Playwright controller property is an additional alias for the existing binding ID. Markers share the runtime family with WebDriver, so aliases and repeated observations cannot inflate the family score.
 
-| Evidence ID | Fixed properties | Weight | Verification and limits |
+| Evidence ID | Probe | Weight | Verification and limits |
 | --- | --- | --- | --- |
 | playwright-binding | `__playwright__binding__`, `__playwright__binding__controller__` | .34 | Installed Playwright 1.63.0 source inspected; genuine `page.exposeBinding` browser fixture. Presence depends on binding configuration, not every Playwright connection. |
 | playwright-init | `__pwInitScripts` | .28 | Legacy compatibility marker, synthetic fixture only; no verified supported-version range. |
 | selenium-global | `__selenium_unwrapped`, `__selenium_evaluate` | .28 | Legacy compatibility markers, synthetic fixtures only; not verified against an actual Selenium launch. |
 | webdriver-global | `__webdriver_evaluate`, `__webdriver_script_fn` | .25 | Legacy compatibility markers, synthetic fixtures only; not standard WebDriver properties or verified protocol identity. |
+| playwright-stack | Optional selected API stack contains `UtilityScript.evaluate` / `UtilityScript.callFunction` | .36 | Real installed Playwright 1.63.0 page-API browser fixture; source spoofing and native-input blind spots remain. |
+| puppeteer-stack | Optional selected API stack has `pptr:evaluate`, `pptr:evaluateHandle` or legacy evaluation source label | .34 | Serialized synthetic fixture only; no real Puppeteer version guarantee. |
 
 The registry records a nullable last-verified date, fixture, version limitations and false-positive notes for each definition. Null means unverified, not implicitly current. The legacy records preserve existing behavior while provenance research continues; they are not newly validated signatures. Any page can forge these properties, and ordinary authorized testing can produce them. They support weak framework hints, never named AI controllers or AGENT_ACTIVE/AGENT_CONNECTED states.
 
@@ -21,7 +23,7 @@ The registry records a nullable last-verified date, fixture, version limitations
 
 Unit fixtures cover each fixed property with a throwing getter, inherited/lookalike names, alias deduplication, serialized execution without module closures, marker-inspection failure, malformed flags and provenance lookups. Synthetic fixtures verify AgentGuard's handling of a marker, not that a framework actually emits it. The real Playwright browser scenario uses `exposeBinding`, checks the actual marker properties, waits for automatic extension detection and verifies framework-only session attribution. It separately hides WebDriver to ensure weak markers are not promoted to named/active agent control.
 
-Real Selenium/Puppeteer launches and normal headed Chrome remain pending. Puppeteer stack signatures belong to the later stack module, not an invented global marker. No unique runtime signatures for browser-use, Stagehand, agent-browser, Codex or Claude are currently validated here. Their absence from this registry is a coverage limitation, not evidence that those tools are absent. Phase 6 remains in progress until the broader primary-source research and required tool matrix are complete.
+Real Selenium/Puppeteer launches and normal headed Chrome remain pending. Stack hints are now implemented as opt-in selected-API wrappers with fixed labels, local immediate stack matching and 90-second expiry. Complete stacks, URLs, arguments and page contents are not returned or stored. Ordinary function names such as callFunction are insufficient. The hooks are compatibility-sensitive, spoofable and not native-driver attribution. Their weights share the existing runtime-family maximum rather than stacking confidence. No unique runtime signatures for browser-use, Stagehand, agent-browser, Codex or Claude are currently validated here. Their absence from this registry is a coverage limitation, not evidence that those tools are absent. Phase 6 remains in progress until the broader primary-source research and required tool matrix are complete.
 
 Primary sources inspected on 2026-09-26:
 

@@ -71,14 +71,51 @@ describe('detector engine and status semantics', () => {
     expect(result.identifiedAgent).toBeNull();
   });
 
-  it('keeps behavior anomalies alone at weak suspicion, never likely or active', async () => {
+  it('does not treat behavior anomalies as automation evidence when coverage is missing', async () => {
     const result = await assess(context({ behavior: {
       trustedEvents: 0, syntheticEvents: 10, intervalSamples: 9,
       meanIntervalMs: 100, intervalVariance: 100, lastTrustedAt: null, startedAt: NOW - 1000,
     } }));
-    expect(result.status).toBe('AUTOMATION_SUSPECTED');
-    expect(result.confidence).toBe(0.18);
-    expect(result.evidence).toHaveLength(2);
+    expect(result.status).toBe('UNMONITORED');
+    expect(result.confidence).toBe(0);
+    expect(result.evidence).toEqual([]);
+  });
+
+  it.each([
+    { trustedEvents: 12, syntheticEvents: 0, intervalSamples: 11, meanIntervalMs: 16, intervalVariance: 0, lastTrustedAt: NOW },
+    { trustedEvents: 0, syntheticEvents: 6, intervalSamples: 5, meanIntervalMs: 740, intervalVariance: 301320, lastTrustedAt: null },
+  ])('does not flag scrolling or page-script interactions with complete coverage: %j', async sample => {
+    const result = await assess(context({ debuggerAttached: false, behavior: { ...sample, startedAt: NOW - 4000 } }));
+    expect(result.status).toBe('NO_AUTOMATION_OBSERVED');
+    expect(result.confidence).toBe(0);
+    expect(result.identifiedAgent).toBeNull();
+    expect(result.evidence.some(item => item.metadata.signal === 'automation-indicator')).toBe(false);
+  });
+
+  it.each([
+    { runtime: { webdriver: true, fingerprints: [] }, debuggerAttached: false, score: 0.82 },
+    { runtime: { webdriver: false, fingerprints: [] }, debuggerAttached: true, score: 0.38 },
+    { runtime: { webdriver: false, fingerprints: ['playwright-binding'] }, debuggerAttached: false, score: 0.34 },
+  ] as const)('does not inflate genuine control evidence with behavioral anomalies: $score', async input => {
+    const result = await assess(context({ runtime: { ...input.runtime, fingerprints: [...input.runtime.fingerprints] }, debuggerAttached: input.debuggerAttached,
+      behavior: { trustedEvents: 12, syntheticEvents: 12, intervalSamples: 23, meanIntervalMs: 16, intervalVariance: 0, lastTrustedAt: NOW, startedAt: NOW - 1000 } }));
+    expect(result.confidence).toBe(input.score);
+    expect(result.evidence.filter(item => item.detector === 'behavior').map(item => item.metadata.signal)).toEqual(['trusted-activity']);
+  });
+
+  it.each(['behavior', 'runtime'] as const)('ignores legacy/crafted behavioral automation evidence in the scorer: %s', family => {
+    const legacy: DetectionEvidence = { detector: 'behavior', family, confidence: 1, description: 'Legacy timing',
+      metadata: { signal: 'automation-indicator', bucket: 'regular-timing' }, observedAt: NOW, expiresAt: NOW + 1000 };
+    const coverage = (['webdriver', 'fingerprint', 'debugger', 'behavior'] as const).map(detector => ({ detector, availability: 'available', reason: 'Checked' } as const));
+    const negative = scoreAssessment(context(), [legacy], coverage);
+    expect(negative.status).toBe('NO_AUTOMATION_OBSERVED');
+    expect(negative.confidence).toBe(0);
+    expect(negative.evidence).toEqual([]);
+    const webdriver: DetectionEvidence = { detector: 'webdriver', family: 'runtime', confidence: 0.82, description: 'Flag',
+      metadata: { signal: 'automation-indicator', webdriver: true }, observedAt: NOW, expiresAt: NOW + 1000 };
+    const positive = scoreAssessment(context(), [webdriver, legacy], coverage);
+    expect(positive.confidence).toBe(0.82);
+    expect(positive.evidence).toEqual([webdriver]);
   });
 
   it('requires coverage for NO_AUTOMATION_OBSERVED and never interprets trusted activity as human control', async () => {

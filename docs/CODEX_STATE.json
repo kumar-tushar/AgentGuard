@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "phase": 6,
-  "phaseName": "WebDriver and runtime fingerprints",
+  "phaseName": "Local competitor-parity expansion",
   "status": "in_progress",
-  "lastCompletedMilestone": "Icon-only toolbar and stacked cross-tab activation/muting complete and packaged; typecheck, 427 unit/integration tests, ten browser scenarios, one dist and one ZIP verified",
-  "currentTask": "Stacked cross-tab notifications with source-specific 24-hour mutes delivered; broader Phase 6 research deferred",
-  "nextTask": "After delivery, broader Phase 6 primary-source research and real-tool validation remain deferred; legacy markers remain explicitly unverified",
-  "filesInProgress": ["src/shared/fingerprints.ts", "src/content/runtime.ts", "src/detection/fingerprint.ts", "src/detection/validation.ts", "src/detection/identity.ts", "src/background/session-observation.ts", "tests/probes.test.ts", "tests/e2e/extension.spec.ts"],
-  "tests": { "typecheck": "stacked_alert_pass", "unit": "427_pass_20files", "build": "single_dist_pass", "e2e": "10_pass_47.4s", "package": "single_zip_pass_2026-10-13" },
-  "knownIssues": ["Sensor activity/correlation and phases6+ remain incomplete; do not claim the full product is complete", "Git baseline is ad67706; preserve user work", "Use explicit current repo workdir and Node 24 PATH"],
+  "lastCompletedMilestone": "Behavioral false-positive detection removed across scoring/restoration/expiry and downstream UI/policy; TypeScript, 492 unit/integration tests across 31 files, 21 Playwright scenarios and 23-file byte-matched ZIP verified; approved security guidance updated",
+  "currentTask": "Requested behavioral false-positive fix complete and packaged; broader product roadmap and deployment acceptance remain in progress",
+  "nextTask": "Complete boundary-violation telemetry and stronger activity attribution; broader real-tool/native/managed/provider validation and separately authenticated fleet backend remain incomplete",
+  "filesInProgress": [],
+  "tests": { "typecheck": "pass", "unit": "492_pass_31files", "build": "single_dist_pass", "e2e": "21_pass_1.8m", "package": "single_zip_pass_2026-10-18_23_files_byte_match_sha256_7a4d33455814322ae35013320b628822d417f0508051475f2d6bc94048828ecb" },
+  "knownIssues": ["Boundary-violation telemetry, stronger attribution and real-tool/native/managed/provider matrix remain incomplete; no full-product certification", "All SECURITY changes explicitly approved and applied; root-only policy scope verified", "Git baseline is ad67706; preserve user work", "Use explicit current repo workdir and Node 24 PATH"],
   "requirementsFile": "docs/PRODUCT_REQUIREMENTS.md",
-  "updatedAt": "2026-10-13"
+  "updatedAt": "2026-10-18"
 }

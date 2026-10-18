@@ -13,10 +13,26 @@ function status(tabId: number): TabAgentStatus {
 }
 
 function quarantine(tabId: number): QuarantineRecord {
-  return { tabId, domain: 'example.com', createdAt: 100, reason: 'Employee requested quarantine', networkBlocked: false };
+  return { tabId, domain: 'example.com', createdAt: 100, reason: 'User requested quarantine', networkBlocked: false };
 }
 
 describe('SessionStore', () => {
+  it('does not restore a legacy behavioral false positive or its policy while preserving genuine evidence and quarantine records', async () => {
+    const assessment = await assess({ now: 100, runtime: { webdriver: true, fingerprints: [] }, behavior: null,
+      debuggerAttached: false, runtimeReason: '', debuggerReason: '' });
+    const genuine: TabAgentStatus = { ...status(2), ...assessment, firstDetectedAt: 100, lastDetectedAt: 100 };
+    const legacy: TabAgentStatus = { ...genuine, tabId: 1, status: 'AUTOMATION_SUSPECTED', confidence: 0.18,
+      evidence: [{ detector: 'behavior', family: 'behavior', confidence: 0.18, description: 'Regular timing',
+        metadata: { signal: 'automation-indicator', bucket: 'regular-timing' }, observedAt: 100, expiresAt: 200 }],
+      coverage: genuine.coverage.map(item => ({ ...item, availability: 'available' })),
+      policy: { action: 'quarantine', reason: 'Legacy automation policy', matchedDomain: 'example.com' },
+    };
+    const store = new SessionStore({ async read() { return { tabs: { 1: legacy, 2: genuine }, quarantines: { 1: quarantine(1) } }; }, async write() {} });
+    await store.load(new Set([1, 2]));
+    expect([...store.tabs.values()]).toEqual([genuine]);
+    expect(store.quarantines.get(1)).toEqual(quarantine(1));
+  });
+
   it('loads only live, well-formed tab and quarantine entries', async () => {
     const store = new SessionStore({
       async read() {

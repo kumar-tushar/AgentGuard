@@ -65,17 +65,25 @@ describe('session observation mapper', () => {
     expect(result.controller.confidence).toBe(0);
   });
 
-  it('maps each coarse behavior bucket and trusted activity without fabricating counters or timestamps', () => {
+  it('maps trusted activity as context without fabricating automation, counters or timestamps', () => {
     const result = toSessionObservation(status({
-      evidence: [evidence('behavior', { signal: 'automation-indicator', bucket: 'synthetic-interactions' }),
-        evidence('behavior', { signal: 'automation-indicator', bucket: 'regular-timing' }),
-        evidence('behavior', { signal: 'trusted-activity' })],
+      status: 'NO_AUTOMATION_OBSERVED', confidence: 0, firstDetectedAt: null, lastDetectedAt: null,
+      evidence: [evidence('behavior', { signal: 'trusted-activity' })],
       coverage: [{ detector: 'behavior', availability: 'available', reason: 'Observed' }],
     }));
-    expect(result.evidenceIds).toEqual(['behavior:synthetic-interactions', 'behavior:regular-timing', 'behavior:trusted-activity']);
+    expect(result.evidenceIds).toEqual(['behavior:trusted-activity']);
+    expect(result.controlState).toBe('NO_AUTOMATION_OBSERVED');
+    expect(result.controlScore).toBe(0);
     expect(result.activityDelta).toEqual(emptyActivity());
     expect(result.lastActivityAt).toBeNull();
     expect(result.automationStack.transports).toEqual([]);
+  });
+
+  it.each(['synthetic-interactions', 'regular-timing'])('rejects retired %s evidence as a live automation observation', bucket => {
+    expect(() => toSessionObservation(status({ status: 'AUTOMATION_SUSPECTED', confidence: 0.18,
+      evidence: [evidence('behavior', { signal: 'automation-indicator', bucket }, 0.18)],
+      coverage: [{ detector: 'behavior', availability: 'available', reason: 'Observed' }],
+    }))).toThrow('Invalid session observation source');
   });
 
   it('uses worker-supplied document-bound deltas without promoting the control state', () => {
@@ -102,6 +110,13 @@ describe('session observation mapper', () => {
     const earlier = { ...status().evidence[0]!, expiresAt: NOW + 10_000 };
     expect(toSessionObservation(status({ expiresAt: NOW + 20_000, evidence: [earlier] })).expiresAt).toBe(NOW + 10_000);
     expect(toSessionObservation(status({ expiresAt: NOW + 5_000, evidence: [earlier] })).expiresAt).toBe(NOW + 5_000);
+  });
+
+  it('does not shorten a control session when activity context expires earlier', () => {
+    const input = status();
+    input.coverage = input.coverage.map(item => ({ ...item, availability: 'available' }));
+    input.evidence.push({ ...evidence('behavior', { signal: 'trusted-activity' }), expiresAt: NOW + 30_000 });
+    expect(toSessionObservation(input).expiresAt).toBe(NOW + 90_000);
   });
 
   it('derives coverage from available detector entries and treats errors as missing coverage', () => {

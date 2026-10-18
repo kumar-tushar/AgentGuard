@@ -6,6 +6,7 @@ import {
 } from '../shared/intelligence';
 import { SESSION_EVIDENCE_IDS } from './agent-sessions';
 import { fingerprintDefinition } from '../shared/fingerprints';
+import { isAutomationEvidence } from '../detection/evidence';
 
 export interface SessionActivity {
   /** Document-bound deltas supplied by the worker, never rolling totals from detector evidence. */
@@ -51,10 +52,6 @@ function evidenceId(evidence: DetectionEvidence, assessedAt: number): EvidenceId
     if (metadata.signal === 'trusted-activity') {
       id = 'behavior:trusted-activity';
       keys = ['signal'];
-    } else if (metadata.signal === 'automation-indicator' &&
-        (metadata.bucket === 'synthetic-interactions' || metadata.bucket === 'regular-timing')) {
-      id = `behavior:${metadata.bucket}`;
-      keys = ['signal', 'bucket'];
     }
   }
   if (!id || !SESSION_EVIDENCE_IDS.includes(id as EvidenceId) ||
@@ -89,8 +86,8 @@ export function toSessionObservation(status: Readonly<TabAgentStatus>, activity:
     const id = evidenceId(evidence, status.assessedAt);
     if (!coverage.get(evidence.detector)) return invalid();
     evidenceIds.add(id);
-    expiresAt = Math.min(expiresAt, evidence.expiresAt);
-    automationObserved ||= evidence.metadata.signal === 'automation-indicator';
+    if (isAutomationEvidence(evidence)) expiresAt = Math.min(expiresAt, evidence.expiresAt);
+    automationObserved ||= isAutomationEvidence(evidence);
     if (id === 'webdriver:webdriver') transports.add('WebDriver');
     if (id === 'debugger:attached') transports.add('CDP');
     if (evidence.detector === 'fingerprint') {

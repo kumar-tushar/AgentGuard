@@ -3,13 +3,25 @@
   "properties": {
     "schemaVersion": { "type": "integer", "enum": [1] },
     "monitoringEnabled": { "type": "boolean" },
-    "behaviorEnabled": { "type": "boolean" },
+    "behaviorEnabled": { "type": "boolean", "description": "Collect bounded activity context and session counters; never use behavior to detect automation or increase detection scores." },
     "policyMode": { "type": "string", "enum": ["monitor", "warn", "block"] },
     "sensitiveDomains": { "type": "array", "items": { "type": "string" } },
     "minimumConfidence": { "type": "number" },
     "retentionDays": { "type": "integer" },
     "maxAuditEvents": { "type": "integer" },
     "sessionRetentionDays": { "type": "integer" },
-    "maxHistorySessions": { "type": "integer" }
+    "maxHistorySessions": { "type": "integer" },
+    "employeeControlsAllowed": { "type": "boolean" },
+    "maximumGrantMinutes": { "type": "integer" },
+    "observationAllowed": { "type": "boolean" },
+    "downloadPolicy": { "type": "string", "enum": ["off", "observe", "block_all"] },
+    "desktopNotifications": { "type": "boolean" },
+    "stackSignalsEnabled": { "type": "boolean" },
+    "trustLookupEnabled": { "type": "boolean" },
+    "trustEndpoint": { "type": "string" },
+    "trustProvider": { "type": "string", "enum": ["aim", "registry"] },
+    "siteDeclarationsEnabled": { "type": "boolean" },
+    "contributionsEnabled": { "type": "boolean" },
+    "contributionEndpoint": { "type": "string" }
   }
 }

@@ -14,30 +14,58 @@ function chunk(type: string, bytes: Buffer): Buffer {
   const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(payload));
   return Buffer.concat([length, payload, checksum]);
 }
-const shield = [[0.5, 0.08], [0.86, 0.22], [0.8, 0.65], [0.5, 0.92], [0.2, 0.65], [0.14, 0.22]] as const;
-function inside(x: number, y: number): boolean {
-  let result = false;
-  for (let i = 0, j = shield.length - 1; i < shield.length; j = i++) {
-    const a = shield[i]!; const b = shield[j]!;
-    if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) result = !result;
-  }
-  return result;
-}
-function distance(x: number, y: number, ax: number, ay: number, bx: number, by: number): number {
-  const t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)));
-  return Math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay));
+type Point = readonly [number, number];
+
+function roundedOutline(points: readonly Point[], cuts: ReadonlyMap<number, number>): Point[] {
+  return points.flatMap((point, index) => {
+    const cut = cuts.get(index);
+    if (!cut) return [point];
+    const toward = (other: Point): Point => {
+      const fraction = Math.min(0.5, cut / Math.hypot(other[0] - point[0], other[1] - point[1]));
+      return [point[0] + (other[0] - point[0]) * fraction, point[1] + (other[1] - point[1]) * fraction];
+    };
+    const from = toward(points[(index + points.length - 1) % points.length]!);
+    const to = toward(points[(index + 1) % points.length]!);
+    return Array.from({ length: 9 }, (_, step): Point => {
+      const t = step / 8; const s = 1 - t;
+      return [s * s * from[0] + 2 * s * t * point[0] + t * t * to[0], s * s * from[1] + 2 * s * t * point[1] + t * t * to[1]];
+    });
+  });
 }
 
-/** Small code-native shield asset; generated at build time without an image dependency. */
+// An open circular orbit and a separate inset cursor, not a filled background tile.
+const arcSteps = 80;
+const arc = (radius: number, reverse: boolean): Point[] => Array.from({ length: arcSteps + 1 }, (_, step) => {
+  const angle = (12 - 292 * (reverse ? 1 - step / arcSteps : step / arcSteps)) * Math.PI / 180;
+  return [0.488 + radius * Math.cos(angle), 0.488 + radius * Math.sin(angle)];
+});
+const orbit = roundedOutline([...arc(0.472, false), ...arc(0.278, true)], new Map([[0, 0.025], [arcSteps, 0.025], [arcSteps + 1, 0.025], [2 * arcSteps + 1, 0.025]]));
+const pointer = roundedOutline([[0.565, 0.53], [0.985, 0.7], [0.825, 0.81], [0.715, 0.985]], new Map([[0, 0.04], [1, 0.028], [2, 0.012], [3, 0.026]]));
+
+function inside(x: number, y: number, outline: readonly Point[]): boolean {
+  let contained = false;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const a = outline[i]!; const b = outline[j]!;
+    if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) contained = !contained;
+  }
+  return contained;
+}
+
+/** Approved Orbit Pointer asset; generated at build time without an image dependency. */
 export function createIcon(size: number, variant: 'neutral' | 'alert' = 'neutral'): Buffer {
   const scanlines = Buffer.alloc(size * (size * 4 + 1));
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const sum = [0, 0, 0, 0];
     for (let sy = 0; sy < 4; sy++) for (let sx = 0; sx < 4; sx++) {
       const px = (x + (sx + 0.5) / 4) / size; const py = (y + (sy + 0.5) / 4) / size;
-      if (!inside(px, py)) continue;
-      const check = Math.min(distance(px, py, 0.31, 0.49, 0.46, 0.64), distance(px, py, 0.46, 0.64, 0.7, 0.35)) < 0.047;
-      const color = check ? [9, 27, 41, 255] : variant === 'alert' ? [239, 68, 68, 255] : [68, 218, 186, 255];
+      const cursor = inside(px, py, pointer);
+      if (!cursor && !inside(px, py, orbit)) continue;
+      const top = variant === 'alert' ? [255, 111, 98] : [63, 235, 167];
+      const bottom = variant === 'alert' ? [229, 20, 54] : [0, 175, 134];
+      // Broad, restrained facets retain the selected concept's depth even at toolbar size.
+      const shade = cursor ? (py - 0.53) * 1.5 : Math.min(1, py + (py > 0.45 + px * 0.55 ? -0.18 : 0));
+      const color = top.map((channel, index) => Math.round(channel + (bottom[index]! - channel) * shade));
+      color.push(255);
       color.forEach((channel, index) => { sum[index] = sum[index]! + channel; });
     }
     const offset = y * (size * 4 + 1) + 1 + x * 4;

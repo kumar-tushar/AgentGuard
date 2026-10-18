@@ -17,6 +17,7 @@ export const SESSION_EVIDENCE_IDS = [
   'webdriver:webdriver', 'debugger:attached',
   'fingerprint:playwright-binding', 'fingerprint:playwright-init',
   'fingerprint:selenium-global', 'fingerprint:webdriver-global',
+  'fingerprint:playwright-stack', 'fingerprint:puppeteer-stack',
   'runtime-stack:playwright-evaluate', 'runtime-stack:puppeteer-evaluate',
   'environment:software-renderer', 'environment:linux-platform', 'environment:headless-browser',
   'environment:virtual-display', 'environment:cloud-browser',
@@ -24,6 +25,11 @@ export const SESSION_EVIDENCE_IDS = [
   'behavior:synthetic-interactions', 'behavior:regular-timing',
   'navigation:automated-navigation',
 ] as const;
+
+// Retired behavior IDs remain parseable in historical records, never live control evidence.
+function hasControlEvidence(ids: readonly string[]): boolean {
+  return ids.some(id => id === 'webdriver:webdriver' || id === 'debugger:attached' || id.startsWith('fingerprint:'));
+}
 
 export const SAFE_TIMELINE_DESCRIPTIONS: Record<SessionTimelineEvent['type'], string> = {
   session_started: 'Automation observation session started',
@@ -121,7 +127,7 @@ function validObservation(value: unknown): value is IntelligenceObservation {
       value.expiresAt - value.observedAt > MAX_EVIDENCE_TTL_MS || !activity(value.activityDelta) ||
       (value.lastActivityAt !== null && (!timestamp(value.lastActivityAt) || value.lastActivityAt > value.observedAt))) return false;
   return !hasAutomation(value.controlState as IntelligenceObservation['controlState']) ||
-    (value.evidenceIds as string[]).length > 0;
+    hasControlEvidence(value.evidenceIds as string[]);
 }
 function validTimeline(value: unknown, start: number, end: number): value is SessionTimelineEvent {
   return record(value) && onlyKeys(value, ['id', 'timestamp', 'kind', 'type', 'description']) && uuid(value.id) &&
@@ -296,6 +302,7 @@ export class AgentSessionStore {
         activeTabs.add(session.tabId);
         this.sessions.set(session.tabId, session);
         if (restarted) this.finish(session, 'browser_restart', now);
+        else if (!hasControlEvidence(session.evidenceIds)) this.finish(session, 'no_evidence', now);
         else if (!liveTabIds.has(session.tabId)) this.finish(session, 'closed', now);
         else if (session.expiresAt <= now) this.finish(session, 'evidence_expired', session.expiresAt);
         else if (currentState(session, now) !== session.controlState) {

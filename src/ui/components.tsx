@@ -1,10 +1,16 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import type { DetectorCoverage, TabAgentStatus, TabState } from '../shared/contracts';
 import { scoreText, stateCopy, timeText } from './client';
 import { useCurrentAssessments } from './freshness';
+import { assessmentDeadline } from '../detection/evidence';
 
-export function Brand({ section }: { section: string }) {
-  return <div className="brand"><div className="brand-mark" aria-hidden="true">AG</div><div><div className="brand-name">AgentGuard</div><div className="brand-section">{section}</div></div></div>;
+export function Brand({ section, alert = false }: { section: string; alert?: boolean }) {
+  const icon = alert ? 'icon-alert' : 'icon';
+  useEffect(() => {
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    favicon?.setAttribute('href', `./icons/${icon}-32.png`);
+  }, [icon]);
+  return <div className="brand"><img className="brand-mark" src={`./icons/${icon}-128.png`} width="37" height="37" alt="" aria-hidden="true" /><div><div className="brand-name">AgentGuard</div><div className="brand-section">{section}</div></div></div>;
 }
 
 export function Notice({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'error' | 'warning' }) {
@@ -20,22 +26,23 @@ export function Score({ value }: { value: number }) {
 }
 
 function CoverageRow({ item }: { item: DetectorCoverage }) {
-  const label = item.detector === 'debugger' ? 'Debugger' : item.detector === 'fingerprint' ? 'Fingerprint' : item.detector === 'webdriver' ? 'WebDriver' : 'Behavior';
+  const label = item.detector === 'debugger' ? 'Debugger' : item.detector === 'fingerprint' ? 'Fingerprint' : item.detector === 'webdriver' ? 'WebDriver' : 'Activity context';
   return <li><span>{label}</span><span className={`coverage-${item.availability}`}>{item.availability}</span><small>{item.reason}</small></li>;
 }
 
-export function TabAssessment({ assessment: observed }: { assessment: TabAgentStatus }) {
+export function TabAssessment({ assessment: observed, actions }: { assessment: TabAgentStatus; actions?: ReactNode }) {
   const assessment = useCurrentAssessments([observed])[0]!;
   return <>
-    {assessment !== observed && <Notice tone="warning">Assessment expired. Waiting for automatic monitoring to refresh the evidence.</Notice>}
+    {assessmentDeadline(observed) <= Date.now() && <Notice tone="warning">Assessment expired. Waiting for automatic monitoring to refresh the evidence.</Notice>}
     <section className={`assessment assessment-${assessment.status.toLowerCase()}`} aria-label="Current tab assessment">
-      <div className="assessment-top"><span className="eyebrow">Current tab · {assessment.domain ?? 'Domain unavailable'}</span><StatusPill status={assessment.status} /></div>
+      <div className="assessment-top"><span className="eyebrow">Current tab · {assessment.domain ?? 'Domain unavailable'}</span></div>
       <h1>{stateCopy[assessment.status].label}</h1>
       <p>{stateCopy[assessment.status].detail}</p>
       <Score value={assessment.confidence} />
       <div className="assessment-meta"><span>Specific agent</span><strong>{assessment.identifiedAgent ?? 'Not identified'}</strong></div>
       {assessment.frameworkHints.length > 0 && <p className="hint">Unverified framework hints: {assessment.frameworkHints.join(', ')}</p>}
     </section>
+    {actions}
     <section className="panel"><div className="section-heading"><h2>Supporting evidence</h2><span>{assessment.evidence.length}</span></div>
       {assessment.evidence.length === 0 ? <p className="muted">No positive automation evidence in this assessment.</p> : <ul className="evidence-list">{assessment.evidence.map((item, index) => <li key={`${item.detector}-${item.observedAt}-${index}`}><div><strong>{item.detector}</strong><span>{scoreText(item.confidence)}</span></div><p>{item.description}</p><small>Observed {timeText(item.observedAt)}</small></li>)}</ul>}
     </section>

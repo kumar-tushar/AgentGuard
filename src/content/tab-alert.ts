@@ -56,7 +56,7 @@ export function renderTabAlert(input: TabAlertStack | null): void {
     host.style.cssText = 'all:initial!important;display:block!important;flex-shrink:0!important;width:100%!important;cursor:pointer!important;';
     const shadow = host.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = ':host(:focus-visible){outline:3px solid #fff!important;outline-offset:-3px!important} .notice{box-sizing:border-box;padding:14px 16px;border:1px solid #fca5a5;border-radius:12px;background:#7f1d1d;color:#fff;font:13px/1.45 system-ui,sans-serif;overflow-wrap:anywhere} strong{display:block;font-size:14px} p{margin:6px 0 0}';
+    style.textContent = ':host(:focus-visible){outline:3px solid #63dbb2!important;outline-offset:-3px!important} .notice{box-sizing:border-box;padding:16px;border:1px solid #74414b;border-left:3px solid #ff9a9f;border-radius:12px;background:#141b25;color:#a2afc1;box-shadow:0 8px 24px #0004;font:12px/1.6 system-ui,sans-serif;overflow-wrap:anywhere} :host(:hover) .notice{background:#19222e;border-color:#ff9a9f} strong{display:block;color:#ffb2b6;font-size:13px;font-weight:650;line-height:1.5} p{margin:8px 0 0}';
     const notice = document.createElement('div');
     notice.className = 'notice';
     const heading = document.createElement('strong');

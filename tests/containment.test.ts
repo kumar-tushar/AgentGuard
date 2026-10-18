@@ -23,6 +23,13 @@ function setup(network = true) {
     async isTabOpen() { return false; },
     async navigateToBlock(tabId) { calls.push(`navigate:${tabId}`); if (failNavigate) throw new Error('navigation failed'); },
     async close(tabId) { calls.push(`close:${tabId}`); },
+    async returnToPage(tabId) {
+      calls.push(`return:${tabId}`);
+      expect(rules.has(tabId)).toBe(false);
+      expect(store.quarantines.has(tabId)).toBe(false);
+      expect(writes.at(-1)?.quarantines[tabId]).toBeUndefined();
+      return { navigation: 'requested' };
+    },
   };
   return {
     calls, rules, writes, store, port, containment: new Containment(store, port),
@@ -128,6 +135,7 @@ describe('Containment', () => {
     ]);
     expect(state.calls.filter((call) => call === 'navigate:1')).toHaveLength(2);
     await state.containment.release(1);
+    expect(state.calls).not.toContain('return:1');
     expect(state.rules.size).toBe(0);
     expect(state.store.quarantines.size).toBe(0);
     await state.containment.quarantine(1, 'example.com', 'policy');
@@ -135,6 +143,26 @@ describe('Containment', () => {
     expect(state.calls).toContain('close:1');
     expect(state.rules.size).toBe(0);
     expect(state.store.quarantines.size).toBe(0);
+  });
+
+  it('returns only after both rule cleanup and release persistence succeed, including retry from an old released page', async () => {
+    const state = setup(); await state.containment.quarantine(1, 'example.com', 'policy');
+    state.setFailRemove(true);
+    await expect(state.containment.releaseAndReturn(1)).rejects.toThrow();
+    expect(state.calls).not.toContain('return:1');
+    state.setFailRemove(false); state.setFailWrite(true);
+    await expect(state.containment.releaseAndReturn(1)).rejects.toThrow();
+    expect(state.calls).not.toContain('return:1');
+    state.setFailWrite(false);
+    expect(await state.containment.releaseAndReturn(1)).toEqual({ navigation: 'requested' });
+    expect(await state.containment.releaseAndReturn(1)).toEqual({ navigation: 'requested' });
+  });
+
+  it('keeps release successful but reports unavailable return when Chrome rejects back navigation', async () => {
+    const state = setup(); await state.containment.quarantine(1, 'example.com', 'policy');
+    vi.spyOn(state.port, 'returnToPage').mockRejectedValue(new Error('No history PRIVATE_URL'));
+    expect(await state.containment.releaseAndReturn(1)).toEqual({ navigation: 'unavailable' });
+    expect(state.store.quarantines.size).toBe(0); expect(state.rules.size).toBe(0);
   });
 
   it('reports a closed tab despite failed rule cleanup and reconciles orphan rules', async () => {
@@ -254,7 +282,9 @@ describe('Chrome containment adapter', () => {
     vi.stubGlobal('chrome', { declarativeNetRequest: { getSessionRules: async () => [], updateSessionRules, RuleActionType: { BLOCK: 'block' } } });
     await chromeContainmentPort().addRule(7);
     expect(updateSessionRules).toHaveBeenCalledWith({ removeRuleIds: [], addRules: [{ id: 1_000_000, priority: 1,
-      action: { type: 'block' }, condition: { tabIds: [7], regexFilter: '^https?://', resourceTypes: expect.arrayContaining(['main_frame', 'sub_frame', 'xmlhttprequest']) } }] });
+      action: { type: 'block' }, condition: { tabIds: [7], regexFilter: '^(?:https?|wss?)://', resourceTypes: expect.arrayContaining(['main_frame', 'sub_frame', 'xmlhttprequest', 'websocket']) } }] });
+    const filter = updateSessionRules.mock.calls[0]![0].addRules![0]!.condition.regexFilter!;
+    for (const url of ['https://example.com/', 'http://example.com/', 'ws://example.com/', 'wss://example.com/']) expect(new RegExp(filter).test(url)).toBe(true);
   });
 
   it('allocates distinct rule IDs concurrently for the full Chrome tab-ID range', async () => {

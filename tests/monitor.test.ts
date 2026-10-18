@@ -247,15 +247,31 @@ describe('TabMonitor', () => {
     expect(state.store.tabs.size).toBe(2);
   });
 
-  it('expires NO_AUTOMATION_OBSERVED at its supporting trusted-event expiry', async () => {
+  it('expires activity context independently without changing a negative runtime/debugger assessment', async () => {
     const state = setup();
     state.observe.mockResolvedValue({ ...context(), runtime: { webdriver: false, fingerprints: [] }, debuggerAttached: false,
       behavior: { trustedEvents: 1, syntheticEvents: 0, intervalSamples: 0, meanIntervalMs: 0, intervalVariance: 0,
         lastTrustedAt: NOW - 5_000, startedAt: NOW - 10_000 } });
     const result = await state.monitor.scan(1);
     expect(result.status).toBe('NO_AUTOMATION_OBSERVED');
-    expect(result.expiresAt).toBe(NOW + 25_000);
-    expect(state.monitor.snapshot(NOW + 25_000)[0]).toMatchObject({ status: 'UNMONITORED', confidence: 0, evidence: [] });
+    expect(result.expiresAt).toBe(NOW + 90_000);
+    await state.monitor.expire(NOW + 25_000);
+    expect(state.monitor.snapshot(NOW + 25_000)[0]).toMatchObject({ status: 'NO_AUTOMATION_OBSERVED', confidence: 0, evidence: [] });
+    expect(state.monitor.snapshot(NOW + 90_000)[0]).toMatchObject({ status: 'UNMONITORED', confidence: 0, evidence: [] });
+  });
+
+  it('does not shorten genuine automation evidence or policy when activity context expires', async () => {
+    const state = setup();
+    state.setConfig({ sensitiveDomains: ['example.com'], policyMode: 'warn' });
+    state.observe.mockResolvedValue({ ...context(), behavior: { trustedEvents: 1, syntheticEvents: 12, intervalSamples: 12,
+      meanIntervalMs: 16, intervalVariance: 0, lastTrustedAt: NOW, startedAt: NOW - 1000 } });
+    const result = await state.monitor.scan(1);
+    expect(result.expiresAt).toBe(NOW + 90_000);
+    expect(result.confidence).toBe(0.8884);
+    await state.monitor.expire(NOW + 30_000);
+    expect(state.monitor.snapshot(NOW + 30_000)[0]).toMatchObject({ status: 'AUTOMATION_LIKELY', confidence: 0.8884, policy: { action: 'warn' } });
+    expect(state.store.tabs.get(1)?.evidence.map(item => item.detector)).toEqual(['webdriver', 'debugger']);
+    expect(state.monitor.snapshot(NOW + 90_000)[0]?.status).toBe('UNMONITORED');
   });
 
   it('clears expired evidence and policy while retaining domains and independent quarantine records', async () => {

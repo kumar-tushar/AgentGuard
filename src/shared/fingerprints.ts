@@ -67,6 +67,21 @@ export const FINGERPRINT_REGISTRY = {
     testFixture: 'tests/probes.test.ts: registry property fixtures (synthetic only)',
     falsePositiveNotes, lastVerifiedDate: null, sources: [],
   },
+  'playwright-stack': {
+    id: 'playwright-stack', framework: 'Playwright-like', vendor: 'Microsoft',
+    signal: { id: 'playwright-stack', ownGlobals: [] }, reliability: 'unverified-framework-hint', confidence: 0.36,
+    description: 'A selected page API call had a Playwright utility-script stack pattern; this is spoofable and does not identify a controller.',
+    hint: 'Playwright-like call stack', versionConstraints: 'Opt-in selected API interception only. Real fixture uses installed Playwright 1.63.0; other versions and native input are not guaranteed.',
+    testFixture: 'tests/e2e/extension.spec.ts: opt-in stack hints fixture', falsePositiveNotes, lastVerifiedDate: '2026-10-16',
+    sources: ['https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/injected/utilityScript.ts'],
+  },
+  'puppeteer-stack': {
+    id: 'puppeteer-stack', framework: 'Puppeteer-like', vendor: 'Puppeteer project',
+    signal: { id: 'puppeteer-stack', ownGlobals: [] }, reliability: 'unverified-framework-hint', confidence: 0.34,
+    description: 'A selected page API call had a Puppeteer evaluation stack pattern; this is spoofable and does not identify a controller.',
+    hint: 'Puppeteer-like call stack', versionConstraints: 'Synthetic source-label fixtures only; no real Puppeteer version matrix established.',
+    testFixture: 'tests/stack.test.ts: serialized stack probe fixtures', falsePositiveNotes, lastVerifiedDate: null, sources: [],
+  },
 } as const satisfies Readonly<Record<Fingerprint, FingerprintDefinition>>;
 
 export const FINGERPRINT_PROBES: readonly FingerprintProbe[] = Object.values(FINGERPRINT_REGISTRY).map(item => item.signal);

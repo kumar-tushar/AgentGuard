@@ -1,5 +1,7 @@
-import type { QuarantineRecord } from '../shared/contracts';
+import type { QuarantineRecord, ReleaseResult } from '../shared/contracts';
 import { MAX_SESSION_TABS, type SessionStore } from './session';
+import { readTab, within } from './browser';
+import { returnToPreviousPage } from './recovery';
 
 export interface ContainmentPort {
   hasRulePermission(): Promise<boolean>;
@@ -10,6 +12,7 @@ export interface ContainmentPort {
   isTabOpen(tabId: number): Promise<boolean>;
   navigateToBlock(tabId: number): Promise<void>;
   close(tabId: number): Promise<void>;
+  returnToPage(tabId: number): Promise<ReleaseResult>;
 }
 
 export class Containment {
@@ -72,16 +75,25 @@ export class Containment {
     });
   }
 
-  release(tabId: number): Promise<void> {
+  private async releaseState(tabId: number): Promise<void> {
+    const previous = this.store.quarantines.get(tabId);
+    if (await this.port.hasRulePermission()) await this.port.removeRule(tabId);
+    this.store.quarantines.delete(tabId);
+    try { await this.store.persist(); }
+    catch {
+      if (previous) this.store.quarantines.set(tabId, { ...previous, networkBlocked: false });
+      throw new Error('Network rule was removed, but release state could not be persisted.');
+    }
+  }
+
+  /** Internal close/reconciliation cleanup must never navigate a tab. */
+  release(tabId: number): Promise<void> { return this.serialize(tabId, () => this.releaseState(tabId)); }
+
+  releaseAndReturn(tabId: number): Promise<ReleaseResult> {
     return this.serialize(tabId, async () => {
-      const previous = this.store.quarantines.get(tabId);
-      if (await this.port.hasRulePermission()) await this.port.removeRule(tabId);
-      this.store.quarantines.delete(tabId);
-      try { await this.store.persist(); }
-      catch {
-        if (previous) this.store.quarantines.set(tabId, { ...previous, networkBlocked: false });
-        throw new Error('Network rule was removed, but release state could not be persisted.');
-      }
+      await this.releaseState(tabId);
+      try { return await this.port.returnToPage(tabId); }
+      catch { return { navigation: 'unavailable' }; }
     });
   }
 
@@ -149,8 +161,9 @@ export function chromeContainmentPort(): ContainmentPort {
   const ownsRule = (rule: chrome.declarativeNetRequest.Rule) => {
     const tabId = rule.condition.tabIds?.[0];
     return tabId !== undefined && rule.condition.tabIds?.length === 1 &&
-      rule.action.type === chrome.declarativeNetRequest.RuleActionType.BLOCK && rule.condition.regexFilter === '^https?://' &&
-      ((rule.id >= firstRuleId && rule.id <= lastRuleId) || rule.id === tabId + 1);
+      rule.action.type === chrome.declarativeNetRequest.RuleActionType.BLOCK &&
+      ((rule.id >= firstRuleId && rule.id <= lastRuleId && ['^https?://', '^(?:https?|wss?)://'].includes(rule.condition.regexFilter ?? '')) ||
+        (rule.id === tabId + 1 && rule.condition.regexFilter === '^https?://'));
   };
   return {
     async hasRulePermission() {
@@ -174,7 +187,7 @@ export function chromeContainmentPort(): ContainmentPort {
           id, priority: 1,
           action: { type: chrome.declarativeNetRequest.RuleActionType.BLOCK },
           // Chrome defaults to excluding main_frame, including with an empty exclusion list.
-          condition: { tabIds: [tabId], regexFilter: '^https?://', resourceTypes: [
+          condition: { tabIds: [tabId], regexFilter: '^(?:https?|wss?)://', resourceTypes: [
             'main_frame', 'sub_frame', 'stylesheet', 'script', 'image', 'font', 'object',
             'xmlhttprequest', 'ping', 'csp_report', 'media', 'websocket', 'webtransport', 'webbundle', 'other',
           ] },
@@ -196,5 +209,14 @@ export function chromeContainmentPort(): ContainmentPort {
     },
     async navigateToBlock(tabId) { await chrome.tabs.update(tabId, { url: chrome.runtime.getURL('blocked.html') }); },
     close: (tabId) => chrome.tabs.remove(tabId),
+    returnToPage: tabId => returnToPreviousPage(tabId, {
+      getTab: readTab,
+      isContainmentPage: url => url?.split(/[?#]/u, 1)[0] === chrome.runtime.getURL('blocked.html'),
+      async goBack(id) {
+        const nonce = crypto.randomUUID();
+        const result: unknown = await within(chrome.tabs.sendMessage(id, { type: 'RETURN_TO_PREVIOUS_PAGE', tabId: id, nonce }, { frameId: 0 }));
+        if (!result || typeof result !== 'object' || Reflect.get(result, 'nonce') !== nonce || Reflect.get(result, 'navigation') !== 'requested') throw new Error('Previous page unavailable');
+      },
+    }),
   };
 }

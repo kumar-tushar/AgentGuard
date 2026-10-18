@@ -2,13 +2,13 @@
 
 ## Deployment
 
-Deploy the same AgentGuard extension from `dist/` for individual and enterprise-managed users. One manifest includes required debugger permission and its broad installation warning; there is no separate enterprise edition. Local preferences and validated managed policy determine behavior. AgentGuard never attaches a debugger or issues CDP commands. A standardized WebDriver flag plus an attachment may indicate a normal test harness; it is not proof of an AI product.
+Deploy the same AgentGuard extension from `dist/` for individual and enterprise-managed users. One manifest includes required debugger permission and its broad installation warning; there is no separate enterprise edition. Local preferences and validated managed policy determine behavior. Detection remains passive; an explicitly selected, short-lived observation mode may attach for hostname-only traffic metadata. Organization policy may deny that access, which remains reduced coverage rather than a safe result. A standardized WebDriver flag plus an attachment may indicate a normal test harness; it is not proof of an AI product.
 
 Distribute a signed extension through your approved Chrome Web Store or enterprise update process. Keep a stable extension ID and protect signing credentials outside this repository. Force installation and browser restrictions are Chrome administration concerns, not capabilities implied by a local build. See [Chrome extension management policy](https://chromeenterprise.google/intl/en_us/policies/extension-settings/) and [extension policy configuration](https://www.chromium.org/administrators/configuring-policy-for-extensions/).
 
 ## Managed configuration
 
-The following is an **extension policy payload**, not a complete device-policy file. Configure it for your deployed extension ID through the organization's supported Chrome policy mechanism. Do not put credentials, employee identifiers or service tokens in managed storage.
+The following is an **extension policy payload**, not a complete device-policy file. Configure it for your deployed extension ID through the organization's supported Chrome policy mechanism. Do not put credentials, user identifiers or service tokens in managed storage.
 
 ```json
 {
@@ -21,11 +21,22 @@ The following is an **extension policy payload**, not a complete device-policy f
   "retentionDays": 14,
   "maxAuditEvents": 1000,
   "sessionRetentionDays": 7,
-  "maxHistorySessions": 50
+  "maxHistorySessions": 50,
+  "employeeControlsAllowed": true,
+  "maximumGrantMinutes": 15,
+  "observationAllowed": false,
+  "downloadPolicy": "off",
+  "desktopNotifications": false,
+  "stackSignalsEnabled": false,
+  "trustLookupEnabled": false,
+  "siteDeclarationsEnabled": false,
+  "contributionsEnabled": false
 }
 ```
 
 Omit a field to allow a local preference for it. Managed keys override local preferences in the service worker and are locked in the editor. Saving other preferences preserves underlying local values for managed keys; removing a managed key restores that local preference. Domain rules match a hostname and its subdomains at DNS label boundaries. Full URLs, paths and ports are rejected. Unicode domains are canonicalized to ASCII; a `*.` prefix is normalized to the same host-and-subdomain rule. Limits: 100 domain rules, 1–90 days audit/session retention, 100–5,000 audit events, 0–500 ended sessions, threshold 0.1–1. Zero ended-session retention disables history retention, not live detection; history is separate from audit retention.
+
+New schema-v1 fields migrate additively. Delegation grants last at most 60 minutes; a stricter managed cap also shortens existing grants without later reviving their old expiry. Pauses never disable detection or sensitive-domain policy. Optional browser download policy is `off`, `observe` or `block_all`: the last cancels ALL new browser downloads, including user downloads, only when optional downloads access exists. No reliable tab/controller attribution is claimed. Optional notifications also require separate Chrome consent. Managed enablement is not proof that either permission was granted. External clients require explicitly configured approved HTTPS endpoints; the extension never stores service credentials or silently contacts a default public server. See [integration contracts](INTEGRATIONS.md).
 
 Invalid local or managed configuration is shown in the console and suspends automatic monitoring/enforcement until corrected. Existing quarantines remain releasable. Chrome schema validation may omit invalid policy before the extension sees it; validate the applied policy in `chrome://policy` as well as AgentGuard's managed locks and errors. This extension has no last-known-good enterprise-policy cache, and a deployment must not assume invalid configuration creates a fail-closed network boundary.
 

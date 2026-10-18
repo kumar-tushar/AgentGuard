@@ -4,19 +4,21 @@ AgentGuard is a local browser automation sensor and a reactive containment aid. 
 
 ## Data minimization
 
-Never read or retain page text/HTML, form values, passwords, tokens, cookies, headers, screenshots, key codes, selectors or coordinates. Never persist full URLs, paths, queries, fragments, tab titles or favicons. Stored data is limited to canonical hostnames, tab and debugger target IDs, fixed target types, static evidence, bounded counters, timestamps, confidence and policy outcomes. Hostnames can themselves be sensitive; exports require an explicit UI action and should be handled as enterprise telemetry. No upload endpoint, analytics or remote scripts are enabled.
+Never read or retain page text/HTML, form values, passwords, tokens, cookies, headers, screenshots, key codes, selectors or coordinates. Never persist full URLs, paths, queries, fragments, tab titles or favicons. Stored data is limited to canonical hostnames, tab and debugger target IDs, fixed target types, static evidence, bounded counters, timestamps, confidence and policy outcomes. Hostnames can themselves be sensitive; exports require an explicit UI action and should be handled as enterprise telemetry. Optional remote features are disabled by default. Explicitly enabled lookups may send fixed framework labels; explicitly consented contributions may send bounded aggregate counts. They must not transmit domains, URLs, page contents, input values, credentials or headers. Remote scripts are forbidden.
 
 Passive debugger history keeps at most 1,000 target records with eight transitions each in browser-session storage. Current observations expire after 90 seconds. Failed inspection is unavailable coverage, not detachment; sampled attachment spans are not exact connection durations and never identify a controller.
+
+Optional site-declaration checks fetch only `/.well-known/ai-safety.txt` from the current HTTPS tab origin, after explicit user enablement. Requests omit credentials and referrers, reject redirects and enforce a timeout and byte limit. Only fixed boolean claims are retained in memory; declarations are self-asserted, never proof of safety, controller identity or authority to relax policy. No page body or linked attestation is fetched.
 
 ## Evidence is not identity
 
 - A debugger attachment can be ordinary DevTools. `getTargets()` does not identify its owner and is not guaranteed to expose every external CDP session. No active attach probe is used.
-- The single extension requires the powerful `debugger` permission, including for individual users, but uses only passive target inspection and never sends CDP commands. A compromised extension with this permission could exceed that intended use; protect distribution and review updates accordingly.
+- Detection uses passive debugger inspection only. A separate user-enabled observation mode may attach and issue narrowly scoped CDP commands for tab-level network/download observations; attach refusal or loss is unavailable coverage, not successful enforcement or absence of automation. A compromised extension with this permission could exceed that intended use; protect distribution and review updates accordingly.
 - Declared debugger permission does not guarantee usable access. Chrome or organization policy can prevent inspection; missing, rejected or timed-out API access and uninspectable tabs are reported as reduced coverage. A generic failure does not identify the exact policy responsible. Without positive automation evidence, unavailable debugger coverage yields UNMONITORED, never human or safe. Other detectors continue operating.
 - If browser policy prevents installation or disables AgentGuard entirely, its code cannot run to display coverage or record events. Deployment tooling must independently verify installation and enabled state; silence from an absent extension is not evidence of safety.
 - WebDriver's standard flag identifies automation behavior, not an AI vendor. Absence does not exonerate a tab. A page can spoof or suppress MAIN-world signals.
 - Browser automation fingerprints change, may be forged and can appear in test tooling or unrelated page code. Framework names are hints only.
-- Browser-generated trusted events are not proof of a human. CDP, accessibility tools and OS automation can generate them. Timing anomalies are weak evidence.
+- Browser-generated trusted events are not proof of a human. CDP, accessibility tools and OS automation can generate them. Click/scroll timing and script-dispatched interactions are activity context only, never automation evidence. They do not increase detection scores or independently trigger automation labels, alerts, sessions or automatic containment.
 - Withheld site access, internal pages, unobserved iframes, short sessions, service-worker suspension and evasion cause blind spots. UNMONITORED is never displayed as safe.
 - Confidence is a documented heuristic, not a statistical probability or a guarantee. AUTOMATION_LIKELY can reflect WebDriver alone; it does not identify an AI controller. NO_AUTOMATION_OBSERVED means no positive signal under current coverage, not proof of human control. ACTIVE/CONNECTED correlation is still being implemented and must not be inferred merely from debugger attachment.
 
@@ -39,6 +41,18 @@ The notice runs in an isolated world with closed shadow content, but its page ho
 ## Containment limits
 
 Quarantine replaces the current page; optional DNR session rules affect requests reaching the network stack on hosts for which Chrome allows access. This is coarse tab containment, not per-agent request attribution. A stored quarantine is a request for containment, not proof of its current effectiveness. AgentGuard attempts to restore the packaged containment page after same-tab navigation, but the destination may load and act before that reactive replacement. CacheStorage/service workers, previously sent requests, existing connections and an agent opening new tabs limit this protection. Revoking optional permissions can reduce containment; errors/degraded capability are shown. AgentGuard never claims to pause/kill an external agent or detach its debugging connection. Closing a tab may lose unsaved work and requires a separate explicit UI confirmation. Toolbar badges describe the last assessment; the popup reads already-collected evidence with freshness checks.
+
+After successful release, AgentGuard requests back navigation only when the tab is still on its packaged containment page. Chrome retains the navigation history; AgentGuard does not read or store the previous URL or page data. Missing history or navigation failure is reported without claiming that the page was restored. Detection and policy remain active and may quarantine the page again.
+
+## Extended controls
+
+Accepted document-bound activity batches count once and remain observations of the tab, not attribution to a controller. Missing samples and zero counters do not prove inactivity. Reports preserve these limitations.
+
+Delegations, pauses and one-time exceptions cannot override managed policy. Page-level controls are best effort against in-page automation and cannot reliably restrict native CDP, accessibility or OS input. Browser network rules are explicitly tab-wide. Exceptions are bounded, expire and are invalidated by navigation or emergency activation.
+
+The emergency shortcut is an explicit request to activate the emergency latch and contain currently detected tabs. Popup activation requires confirmation. The latch survives worker restart; actual per-tab outcomes and partial failures remain visible. Neither action terminates an external controller.
+
+Optional download monitoring must never cancel using sole-agent or hostname fallback attribution. Cancellation requires browser-supplied tab correlation or an explicitly approved coarse policy, and success is reported only after confirmation. Network records retain canonical hostnames and fixed metadata only, never headers, bodies or full URLs.
 
 ## Enterprise administration
 

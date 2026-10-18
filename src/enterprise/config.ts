@@ -1,9 +1,13 @@
 import type { AgentGuardConfig, EffectiveConfig } from '../shared/contracts';
 import { normalizeDomain } from '../shared/domains';
+import { integrationEndpoint } from '../integrations/client';
 
 const CONFIG_KEYS = [
   'schemaVersion', 'monitoringEnabled', 'behaviorEnabled', 'policyMode',
   'sensitiveDomains', 'minimumConfidence', 'retentionDays', 'maxAuditEvents', 'sessionRetentionDays', 'maxHistorySessions',
+  'employeeControlsAllowed', 'maximumGrantMinutes',
+  'observationAllowed', 'downloadPolicy', 'desktopNotifications', 'stackSignalsEnabled',
+  'trustLookupEnabled', 'trustEndpoint', 'trustProvider', 'siteDeclarationsEnabled', 'contributionsEnabled', 'contributionEndpoint',
 ] as const satisfies readonly (keyof AgentGuardConfig)[];
 
 export const DEFAULT_CONFIG: AgentGuardConfig = Object.freeze({
@@ -17,6 +21,14 @@ export const DEFAULT_CONFIG: AgentGuardConfig = Object.freeze({
   maxAuditEvents: 1000,
   sessionRetentionDays: 7,
   maxHistorySessions: 50,
+  employeeControlsAllowed: true,
+  maximumGrantMinutes: 60,
+  observationAllowed: true,
+  downloadPolicy: 'off',
+  desktopNotifications: false,
+  stackSignalsEnabled: false,
+  trustLookupEnabled: false, trustEndpoint: null, trustProvider: 'registry',
+  siteDeclarationsEnabled: false, contributionsEnabled: false, contributionEndpoint: null,
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -56,6 +68,24 @@ export function validateConfig(input: unknown): AgentGuardConfig {
   // Additive schema-v1 migration: existing saved preferences acquire bounded defaults.
   const sessionRetentionDays = input.sessionRetentionDays === undefined ? 7 : input.sessionRetentionDays;
   const maxHistorySessions = input.maxHistorySessions === undefined ? 50 : input.maxHistorySessions;
+  const employeeControlsAllowed = input.employeeControlsAllowed === undefined ? true : input.employeeControlsAllowed;
+  const maximumGrantMinutes = input.maximumGrantMinutes === undefined ? 60 : input.maximumGrantMinutes;
+  const observationAllowed = input.observationAllowed === undefined ? true : input.observationAllowed;
+  const downloadPolicy = input.downloadPolicy === undefined ? 'off' : input.downloadPolicy;
+  const desktopNotifications = input.desktopNotifications === undefined ? false : input.desktopNotifications;
+  const stackSignalsEnabled = input.stackSignalsEnabled === undefined ? false : input.stackSignalsEnabled;
+  if (typeof stackSignalsEnabled !== 'boolean') throw new Error('stackSignalsEnabled must be boolean');
+  const trustLookupEnabled = input.trustLookupEnabled === undefined ? false : input.trustLookupEnabled;
+  const siteDeclarationsEnabled = input.siteDeclarationsEnabled === undefined ? false : input.siteDeclarationsEnabled;
+  const contributionsEnabled = input.contributionsEnabled === undefined ? false : input.contributionsEnabled;
+  if ([trustLookupEnabled, siteDeclarationsEnabled, contributionsEnabled].some(value => typeof value !== 'boolean')) throw new Error('Integration enablement must be boolean');
+  const trustEndpoint = integrationEndpoint(input.trustEndpoint), contributionEndpoint = integrationEndpoint(input.contributionEndpoint);
+  const trustProvider = input.trustProvider === undefined ? 'registry' : input.trustProvider;
+  if (trustProvider !== 'aim' && trustProvider !== 'registry') throw new Error('Invalid trust provider');
+  if (trustLookupEnabled && !trustEndpoint || contributionsEnabled && !contributionEndpoint) throw new Error('Enabled integration requires an approved HTTPS endpoint');
+  if (typeof desktopNotifications !== 'boolean') throw new Error('desktopNotifications must be boolean');
+  if (typeof observationAllowed !== 'boolean' || (downloadPolicy !== 'off' && downloadPolicy !== 'observe' && downloadPolicy !== 'block_all')) throw new Error('Invalid optional observation settings');
+  if (typeof employeeControlsAllowed !== 'boolean' || !Number.isInteger(maximumGrantMinutes) || (maximumGrantMinutes as number) < 1 || (maximumGrantMinutes as number) > 60) throw new Error('Invalid user control limits');
   if (!Number.isInteger(sessionRetentionDays) || (sessionRetentionDays as number) < 1 || (sessionRetentionDays as number) > 90) {
     throw new Error('sessionRetentionDays must be an integer from 1 to 90');
   }
@@ -73,6 +103,14 @@ export function validateConfig(input: unknown): AgentGuardConfig {
     maxAuditEvents: input.maxAuditEvents as number,
     sessionRetentionDays: sessionRetentionDays as number,
     maxHistorySessions: maxHistorySessions as number,
+    employeeControlsAllowed,
+    maximumGrantMinutes: maximumGrantMinutes as number,
+    observationAllowed,
+    downloadPolicy: downloadPolicy as AgentGuardConfig['downloadPolicy'],
+    desktopNotifications,
+    stackSignalsEnabled,
+    trustLookupEnabled: trustLookupEnabled as boolean, trustEndpoint, trustProvider,
+    siteDeclarationsEnabled: siteDeclarationsEnabled as boolean, contributionsEnabled: contributionsEnabled as boolean, contributionEndpoint,
   };
 }
 

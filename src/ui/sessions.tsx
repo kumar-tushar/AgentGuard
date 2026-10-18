@@ -4,6 +4,7 @@ import type { ActivityCounters, AgentSession } from '../shared/intelligence';
 import { errorText, scoreText, send, timeText } from './client';
 import { Notice, StatusPill } from './components';
 import { useCurrentAssessments } from './freshness';
+import { SessionReportButton } from './report';
 
 const activityLabels: Record<keyof ActivityCounters, string> = {
   navigations: 'Navigations', pointerInteractions: 'Pointer interactions', keyboardInteractions: 'Keyboard interactions',
@@ -35,9 +36,10 @@ function SessionCard({ session, state, historical }: { session: AgentSession; st
       {historical && <div><dt>Ended</dt><dd>{timeText(session.endedAt)} · {session.endReason?.replaceAll('_', ' ') ?? 'Reason unavailable'}</dd></div>}
     </dl>
     {!historical && !hasCurrentEvidence && <p className="muted small">Current coverage is unavailable or expired. Session details below describe earlier observations, not current control.</p>}
+    <SessionReportButton sessionId={session.id} />
     <details className="session-details"><summary>Activity and timeline</summary>
       <p className="muted small">Counts describe activity in this tab, not proof the controller performed it. No entered values or page contents are recorded.</p>
-      <p className="muted small">Activity integration is not yet enabled in this build; zero counters are not proof of inactivity.</p>
+      <p className="muted small">Only accepted top-frame samples are counted while collection is enabled. Missing samples and zero counters are not proof of inactivity; native driver actions cannot be reliably distinguished from user actions.</p>
       <dl className="session-counts">{Object.entries(activityLabels).map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{session.observedActivity[key as keyof ActivityCounters]}</dd></div>)}</dl>
       <h4>Observation timeline</h4>
       {session.timeline.length ? <ol className="session-timeline">{session.timeline.map((event) => <li key={event.id}><div><span className={`timeline-kind timeline-${event.kind.toLowerCase()}`}>{event.kind}</span><time dateTime={new Date(event.timestamp).toISOString()}>{timeText(event.timestamp)}</time></div><p>{event.description}</p></li>)}</ol> : <p className="muted">No retained timeline events.</p>}

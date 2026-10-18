@@ -51,6 +51,19 @@ describe('passive debugger access and reduced coverage', () => {
     return { now, attach, sendCommand };
   }
 
+  it('invalidates a passive capture spanning an entire own-observer attach/detach epoch', async () => {
+    let resolve!: (value: unknown) => void;
+    const getTargets = vi.fn().mockReturnValueOnce(new Promise(done => { resolve = done; })).mockResolvedValue([{ id: 'target', type: 'page', tabId: 7, attached: false }]);
+    mockObservation(getTargets);
+    const adapter = await import('../src/background/browser');
+    const { observationOwners } = await import('../src/background/debugger-ownership');
+    const pending = adapter.captureDebuggerSnapshot(true);
+    observationOwners.add(7); observationOwners.delete(7);
+    resolve([{ id: 'target', type: 'page', tabId: 7, attached: true }]);
+    expect((await pending).available).toBe(false);
+    expect((await adapter.captureDebuggerSnapshot(true)).available).toBe(true);
+  });
+
   it('reports policy/API denial as lost coverage despite its declared permission and trusted activity', async () => {
     const getTargets = vi.fn().mockRejectedValue(new Error('Policy denied debugger: PRIVATE_DETAILS'));
     const { now, attach, sendCommand } = mockObservation(getTargets);

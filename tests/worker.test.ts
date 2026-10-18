@@ -30,7 +30,7 @@ function chromeFixture(failStorage = false) {
     webNavigation: { getFrame: vi.fn(async (_details: { tabId: number; frameId: number }) => ({ documentId: 'doc-1', documentLifecycle: 'active', url: 'https://example.com' })),
       onHistoryStateUpdated: event(), onReferenceFragmentUpdated: event() },
     debugger: { getTargets: vi.fn(async () => [{ id: 'target', type: 'page', tabId: 1, attached: false }]) },
-    scripting: { executeScript: vi.fn(async (input: { files?: string[]; world: string; args?: unknown[]; func?: unknown; target?: unknown }) => input.files ? [] : [{ frameId: 0, documentId: 'doc-1',
+    scripting: { executeScript: vi.fn(async (input: { files?: string[]; world: string; args?: unknown[]; func?: unknown; target?: unknown }): Promise<chrome.scripting.InjectionResult<unknown>[]> => input.files ? [] : [{ frameId: 0, documentId: 'doc-1',
       result: input.world === 'MAIN' ? { webdriver: true, fingerprints: [] } : null }]) },
     permissions: { getAll: vi.fn(async () => ({ permissions: [], origins: [] })), onAdded: event(), onRemoved: event() },
     alarms: { create: vi.fn(async () => undefined), onAlarm: event() },
@@ -56,19 +56,87 @@ async function issuedAlert(fixture: ReturnType<typeof chromeFixture>, tabId = 1)
   return alerts().find(value => value.tabId === tabId)!;
 }
 
-const recovery = { release: vi.fn(async () => undefined), reconcile: vi.fn(async () => undefined) };
+const recovery = { release: vi.fn(async () => undefined), releaseAndReturn: vi.fn(async () => ({ navigation: 'requested' as const })), reconcile: vi.fn(async () => undefined) };
 beforeEach(() => {
   vi.resetModules();
   recovery.release.mockReset().mockResolvedValue(undefined);
+  recovery.releaseAndReturn.mockReset().mockResolvedValue({ navigation: 'requested' });
   recovery.reconcile.mockReset().mockResolvedValue(undefined);
   vi.doMock('../src/background/containment', () => ({
     chromeContainmentPort: () => ({}),
-    Containment: class { release = recovery.release; reconcile = recovery.reconcile; },
+    Containment: class { release = recovery.release; releaseAndReturn = recovery.releaseAndReturn; reconcile = recovery.reconcile; },
   }));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.doUnmock('../src/background/containment'); });
 
 describe('service worker initialization and recovery', () => {
+  it.each(['scroll', 'page-script'] as const)('does not turn %s activity into icons, alerts, sessions or automatic containment', async kind => {
+    const now = Date.now();
+    const fixture = chromeFixture();
+    fixture.chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com', status: 'complete' }]);
+    fixture.local['agentguard.config.v1'] = { ...DEFAULT_CONFIG, policyMode: 'block', sensitiveDomains: ['example.com'], minimumConfidence: 0.1, desktopNotifications: true };
+    if (kind === 'page-script') fixture.local['agentguard.emergency.v1'] = { schemaVersion: 1, active: true, activatedAt: now, outcomes: [] };
+    const notifications = { create: vi.fn(async () => 'notice'), clear: vi.fn(async () => true), onClicked: { addListener: vi.fn() } };
+    Object.assign(fixture.chromeMock, { notifications });
+    Object.assign(fixture.chromeMock.permissions, { contains: vi.fn(async () => true) });
+    fixture.chromeMock.scripting.executeScript.mockImplementation(async input => input.files ? [] : [{ frameId: 0, documentId: 'doc-1',
+      result: input.world === 'MAIN' ? { webdriver: false, fingerprints: [] } : {
+        trustedEvents: kind === 'scroll' ? 12 : 0, syntheticEvents: kind === 'scroll' ? 0 : 12, intervalSamples: 11,
+        meanIntervalMs: 16, intervalVariance: 0, lastTrustedAt: kind === 'scroll' ? now : null, startedAt: now - 1000,
+      },
+    }]);
+    vi.stubGlobal('chrome', fixture.chromeMock);
+    await import('../src/background/worker');
+    await vi.waitFor(() => expect(fixture.session['agentguard.session.v1']).toMatchObject({ tabs: { 1: { status: 'NO_AUTOMATION_OBSERVED', confidence: 0, policy: { action: 'none' } } } }));
+    await vi.waitFor(() => expect(alertPresentations(fixture).at(-1)).toMatchObject({ alerts: [] }));
+    const response = await fixture.call({ type: 'GET_DASHBOARD' }) as Response<Dashboard>;
+    if (!response.ok) throw new Error(response.error);
+    expect(response.data.sessions).toEqual([]);
+    expect(response.data.quarantines).toEqual([]);
+    expect(response.data.statistics?.sessionsObserved).toBe(0);
+    expect(response.data.emergency?.outcomes).toEqual([]);
+    expect(response.data.healthErrors).toEqual([]);
+    expect(response.data.audit.some(event => ['policy_triggered', 'quarantined', 'enforcement_failed'].includes(event.eventType))).toBe(false);
+    expect(notifications.create).not.toHaveBeenCalled();
+    expect(fixture.chromeMock.action.setIcon).toHaveBeenCalledWith({ tabId: 1, path: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png' } });
+    expect(fixture.chromeMock.action.setIcon.mock.calls.flat().some(input => input.path[16].includes('alert'))).toBe(false);
+  });
+
+  it('integrates a document-bound activity batch once without creating another observation session', async () => {
+    const clock = vi.spyOn(Date, 'now');
+    let now = 1_800_000_000_000;
+    clock.mockImplementation(() => now);
+    try {
+      const fixture = chromeFixture();
+      fixture.chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com', status: 'complete' }]);
+      vi.stubGlobal('chrome', fixture.chromeMock);
+      await import('../src/background/worker');
+      await issuedAlert(fixture);
+      now += 1000;
+      const packet = { type: 'SENSOR_SIGNAL', schemaVersion: 1, sequence: 1, reason: 'interaction', observedAt: now,
+        visibility: 'visible', counts: { pointer: 2, keyboard: 3, input: 1, submit: 0, scroll: 1, focus: 0, trusted: 7, synthetic: 0, hiddenTrusted: 0 }, lastActivityAt: now };
+      expect(await fixture.call(packet, alertSender)).toMatchObject({ ok: true });
+      await vi.waitFor(() => expect(fixture.session['agentguard.agent-sessions.v1']).toMatchObject({ sessions: [{ observedActivity: { pointerInteractions: 2, keyboardInteractions: 3 } }] }));
+      expect(await fixture.call(packet, alertSender)).toMatchObject({ ok: true });
+      expect(fixture.session['agentguard.agent-sessions.v1']).toMatchObject({ sessions: [{ observedActivity: { keyboardInteractions: 3 } }] });
+      expect(fixture.local['agentguard.statistics.v1']).toMatchObject({ summary: { sessionsObserved: 1 } });
+    } finally { clock.mockRestore(); }
+  });
+  it('automatically retries a startup scan discarded when an extension document becomes identifiable', async () => {
+    const fixture = chromeFixture();
+    fixture.chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com', status: 'complete' }]);
+    let reads = 0;
+    fixture.chromeMock.tabs.get.mockImplementation(async id => {
+      reads++;
+      // The first read sees a newly created tab before Chrome exposes its URL.
+      return { id, status: 'complete', ...(reads === 1 ? {} : { url: 'https://example.com' }) };
+    });
+    Object.assign(fixture.chromeMock.runtime, { ContextType: { TAB: 'TAB' }, getContexts: vi.fn(async () => []) });
+    vi.stubGlobal('chrome', fixture.chromeMock);
+    await import('../src/background/worker');
+    await vi.waitFor(() => expect(fixture.session['agentguard.session.v1']).toMatchObject({ tabs: { 1: { status: 'AUTOMATION_LIKELY' } } }));
+    expect(reads).toBeGreaterThan(2);
+  });
   it('observes existing tabs at startup without any popup command and dashboard reads do not start detection', async () => {
     const fixture = chromeFixture();
     fixture.chromeMock.tabs.query.mockResolvedValue([{ id: 1, url: 'https://example.com', status: 'complete' }]);
@@ -202,8 +270,8 @@ describe('service worker initialization and recovery', () => {
     if (!response.ok) throw new Error(response.error);
     expect(response.data.healthErrors).toContain('Some quarantine rules could not be restored. Review or release affected tabs; monitoring remains available.');
     expect(JSON.stringify(response)).not.toContain('PRIVATE_URL');
-    expect(await fixture.call({ type: 'RELEASE_TAB', tabId: 1 })).toEqual({ ok: true, data: null });
-    expect(recovery.release).toHaveBeenCalledWith(1);
+    expect(await fixture.call({ type: 'RELEASE_TAB', tabId: 1 })).toEqual({ ok: true, data: { navigation: 'requested' } });
+    expect(recovery.releaseAndReturn).toHaveBeenCalledWith(1);
     for (const area of [fixture.chromeMock.storage.local, fixture.chromeMock.storage.session, fixture.chromeMock.storage.managed]) {
       expect(area.setAccessLevel).toHaveBeenCalledWith({ accessLevel: 'TRUSTED_CONTEXTS' });
     }

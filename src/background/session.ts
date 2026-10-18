@@ -2,6 +2,7 @@ import type { DetectionEvidence, DetectorCoverage, DetectorId, QuarantineRecord,
 import { scoreAssessment } from '../detection/scoring';
 import { normalizeDomain } from '../shared/domains';
 import { CONTROL_STATES, hasAutomation } from '../shared/intelligence';
+import { fingerprintDefinition } from '../shared/fingerprints';
 
 export const MAX_SESSION_TABS = 500;
 const DETECTOR_FAMILIES = { webdriver: 'runtime', fingerprint: 'runtime', debugger: 'debugger', behavior: 'behavior' } as const;
@@ -50,10 +51,8 @@ function validEvidence(value: unknown, assessedAt: number): value is DetectionEv
     metadata.signal === 'automation-indicator' && metadata.attached === true;
   if (value.detector === 'fingerprint') return hasOnlyKeys(metadata, ['signal', 'marker']) &&
     metadata.signal === 'automation-indicator' && typeof metadata.marker === 'string' &&
-    ['playwright-binding', 'playwright-init', 'selenium-global', 'webdriver-global'].includes(metadata.marker);
-  return metadata.signal === 'trusted-activity' ? hasOnlyKeys(metadata, ['signal']) :
-    hasOnlyKeys(metadata, ['signal', 'bucket']) && metadata.signal === 'automation-indicator' &&
-      (metadata.bucket === 'synthetic-interactions' || metadata.bucket === 'regular-timing');
+    fingerprintDefinition(metadata.marker) !== undefined;
+  return metadata.signal === 'trusted-activity' && hasOnlyKeys(metadata, ['signal']);
 }
 
 function validCoverage(value: unknown): value is DetectorCoverage {

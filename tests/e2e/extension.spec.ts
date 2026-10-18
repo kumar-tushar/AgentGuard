@@ -43,9 +43,45 @@ async function openExtension(path = resolve('dist'), profile = ''): Promise<{ co
   } catch (error) { await context.close(); throw error; }
 }
 
+test('packaged Orbit Pointer icons have matching green/red silhouettes and transparent cutouts', async () => {
+  const { context, options } = await openExtension();
+  try {
+    const icons = await options.evaluate(async () => {
+      const results = [];
+      for (const size of [16, 32, 48, 128]) {
+        const pair = [];
+        for (const prefix of ['icon', 'icon-alert']) {
+          const image = new Image(); image.src = `./icons/${prefix}-${size}.png`; await image.decode();
+          const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
+          const drawing = canvas.getContext('2d')!; drawing.drawImage(image, 0, 0);
+          const data = drawing.getImageData(0, 0, size, size).data;
+          const at = (x: number, y: number) => Array.from(data.slice((Math.floor(y * size) * size + Math.floor(x * size)) * 4, (Math.floor(y * size) * size + Math.floor(x * size)) * 4 + 4));
+          pair.push({ width: image.naturalWidth, height: image.naturalHeight, alpha: Array.from(data.filter((_, index) => index % 4 === 3)), center: at(0.5, 0.5), gap: at(0.84, 0.6), ring: at(0.45, 0.08), cursor: at(0.73, 0.72) });
+        }
+        results.push({ size, green: pair[0]!, red: pair[1]! });
+      }
+      return results;
+    });
+    for (const { size, green, red } of icons) {
+      expect(green.width).toBe(size); expect(green.height).toBe(size);
+      expect(red.width).toBe(size); expect(red.height).toBe(size);
+      expect(green.alpha).toEqual(red.alpha);
+      for (const icon of [green, red]) {
+        expect(icon.center).toEqual([0, 0, 0, 0]); expect(icon.gap).toEqual([0, 0, 0, 0]);
+        expect(icon.ring[3]).toBe(255); expect(icon.cursor[3]).toBe(255);
+      }
+      expect(green.ring[1]!).toBeGreaterThan(green.ring[0]! + 60);
+      expect(red.ring[0]!).toBeGreaterThan(red.ring[1]! + 70);
+    }
+  } finally { await context.close(); }
+});
+
 test('single extension: automatic detection, real policy, quarantine, release and privacy', async ({}, testInfo) => {
   const { context, options, extensionId } = await openExtension();
   try {
+    await expect(options.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-128.png');
+    await expect(options.locator('.brand-mark')).toHaveJSProperty('naturalWidth', 128);
+    await expect(options.locator('link[rel="icon"]')).toHaveAttribute('href', './icons/icon-32.png');
     const errors: string[] = [];
     options.on('pageerror', (error) => errors.push(error.message));
     const site = await context.newPage();
@@ -74,6 +110,9 @@ test('single extension: automatic detection, real policy, quarantine, release an
     await options.evaluate((url) => chrome.tabs.create({ url, active: false }), `chrome-extension://${extensionId}/popup.html`);
     const popup = await popupOpened;
     await expect(popup.getByRole('heading', { name: 'Automation likely' })).toBeVisible();
+    await expect(popup.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-alert-128.png');
+    await expect(popup.locator('.brand-mark')).toHaveJSProperty('naturalWidth', 128);
+    await expect(popup.locator('link[rel="icon"]')).toHaveAttribute('href', './icons/icon-alert-32.png');
     await popup.setViewportSize({ width: 420, height: 800 });
     await popup.screenshot({ path: testInfo.outputPath('popup.png'), fullPage: true });
 
@@ -92,6 +131,9 @@ test('single extension: automatic detection, real policy, quarantine, release an
     expect(quarantine.networkBlocked).toBe(false);
     await expect(site).toHaveURL(`chrome-extension://${extensionId}/blocked.html`);
     await expect(site.getByRole('heading', { name: 'This tab is quarantined' })).toBeVisible();
+    await expect(site.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-alert-128.png');
+    await expect(site.locator('.brand-mark')).toHaveJSProperty('naturalWidth', 128);
+    await expect(site.locator('link[rel="icon"]')).toHaveAttribute('href', './icons/icon-alert-32.png');
     await expect(site.getByText('127.0.0.1', { exact: true })).toBeVisible();
     await site.screenshot({ path: testInfo.outputPath('quarantined.png'), fullPage: true });
 
@@ -111,7 +153,8 @@ test('single extension: automatic detection, real policy, quarantine, release an
     await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).quarantines.length).toBe(1);
 
     await site.getByRole('button', { name: 'Release this tab' }).click();
-    await expect(site.getByRole('heading', { name: 'Containment released' })).toBeVisible();
+    await expect(site).toHaveURL('http://127.0.0.1/attempted-return');
+    await expect(site.getByRole('heading', { name: 'Automation test fixture' })).toBeVisible();
     const dashboard: Dashboard = await send(options, { type: 'GET_DASHBOARD' });
     expect(dashboard.quarantines).toHaveLength(0);
     expect(dashboard.config.values.policyMode).toBe('warn');
@@ -178,12 +221,29 @@ test('optional permissions granted: real DNR blocking, tab isolation, automatic 
     await site.goto(url);
     const id = await options.evaluate(async (url) => (await chrome.tabs.query({})).find((tab) => tab.url === url)?.id, url);
     expect(id).toBeDefined();
+    await recordedTab(options, id!);
+    await send(options, { type: 'GRANT_DELEGATION', tabId: id!, preset: 'LIMITED', allowedDomains: ['127.0.0.1'], blockedDomains: ['127.0.0.1'], minutes: 15 });
+    expect((await send(options, { type: 'GET_DASHBOARD' })).delegationNetworkTabs).toContain(id!);
+    // Remove the page gate for exactly this call: the separate DNR denial must
+    // still win. No request may reach the actual server.
+    await send(options, { type: 'GRANT_ONCE', tabId: id!, capability: 'network' });
+    const beforeDelegationRequest = requests;
+    expect(await site.evaluate(async () => { try { await fetch('/delegation-blocked'); return false; } catch { return true; } })).toBe(true);
+    expect(requests).toBe(beforeDelegationRequest);
+    await send(options, { type: 'REVOKE_DELEGATION', tabId: id! });
+    expect(await site.evaluate(() => fetch('/delegation-released').then(response => response.ok))).toBe(true);
     const record = await send(options, { type: 'QUARANTINE_TAB', tabId: id! });
     expect(record.networkBlocked).toBe(true);
     await expect(site).toHaveURL(`chrome-extension://${extensionId}/blocked.html`);
     const rules = await options.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
     expect(rules).toHaveLength(1);
     expect(rules[0]?.condition.tabIds).toEqual([id]);
+    await send(options, { type: 'RELEASE_TAB', tabId: id! });
+    await expect(site).toHaveURL(url);
+    await expect(site.getByRole('heading', { name: 'Local containment fixture' })).toBeVisible();
+    expect(await options.evaluate(() => chrome.declarativeNetRequest.getSessionRules())).toEqual([]);
+    await send(options, { type: 'QUARANTINE_TAB', tabId: id! });
+    await expect(site).toHaveURL(`chrome-extension://${extensionId}/blocked.html`);
     const before = requests;
     await expect(site.goto(`${url}blocked-request`)).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
     expect(requests).toBe(before);
@@ -212,6 +272,46 @@ test('optional permissions granted: real DNR blocking, tab isolation, automatic 
     await context.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+
+test('release returns the original page after reload and worker restart, with truthful no-history fallback', async () => {
+  const { context, options, extensionId } = await openExtension();
+  try {
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Original page restored</h1>' }));
+    const originalUrl = 'http://127.0.0.1/PRIVATE_RETURN_PATH?token=PRIVATE_RETURN_TOKEN';
+    await site.goto(originalUrl);
+    const tabId = await options.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, originalUrl);
+    await recordedTab(options, tabId!);
+    await send(options, { type: 'QUARANTINE_TAB', tabId: tabId! });
+    await expect(site.getByText('User requested emergency quarantine.', { exact: true })).toBeVisible();
+    await expect(site.getByText('Employee requested emergency quarantine.', { exact: true })).toHaveCount(0);
+    await site.reload();
+    const browserSession = await context.browser()!.newBrowserCDPSession();
+    const { targetInfos } = await browserSession.send('Target.getTargets');
+    const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${extensionId}/`))!;
+    await browserSession.send('Target.closeTarget', { targetId: worker.targetId });
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).quarantines.some(record => record.tabId === tabId)).toBe(true);
+    await site.getByRole('button', { name: 'Release this tab' }).click();
+    await expect(site).toHaveURL(originalUrl);
+    await expect(site.getByRole('heading', { name: 'Original page restored' })).toBeVisible();
+    expect((await send(options, { type: 'GET_DASHBOARD' })).quarantines.some(record => record.tabId === tabId)).toBe(false);
+    const stored = await options.evaluate(async () => ({ local: await chrome.storage.local.get(null), session: await chrome.storage.session.get(null) }));
+    expect(JSON.stringify(stored)).not.toContain('PRIVATE_RETURN_');
+    await expect(options).toHaveURL(`chrome-extension://${extensionId}/options.html`);
+
+    // A directly opened containment URL has no original page to invent.
+    const opened = context.waitForEvent('page');
+    await options.evaluate(url => chrome.tabs.create({ url, active: false }), `chrome-extension://${extensionId}/blocked.html`);
+    const orphan = await opened;
+    await expect(orphan.getByRole('heading', { name: 'Containment not confirmed' })).toBeVisible();
+    await orphan.getByRole('button', { name: 'Return to previous page' }).click();
+    await expect(orphan.getByRole('heading', { name: 'Containment released' })).toBeVisible();
+    await expect(orphan.getByText(/Chrome could not return to the previous page/)).toBeVisible();
+    await expect(orphan.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-128.png');
+    await expect(orphan.locator('link[rel="icon"]')).toHaveAttribute('href', './icons/icon-32.png');
+    await expect(orphan.getByRole('button', { name: 'Return to previous page' })).toBeVisible();
+  } finally { await context.close(); }
 });
 
 test('real Playwright binding registry fixture remains a framework hint, never an identified AI controller', async () => {
@@ -300,6 +400,88 @@ test('restricted pages remain UNMONITORED despite required HTTP(S) monitoring ac
     expect([...dashboard.capabilities.origins].sort()).toEqual(['http://*/*', 'https://*/*']);
     expect(dashboard.capabilities.debugger).toBe(true);
     expect(dashboard.capabilities.networkBlocking).toBe(false);
+  } finally { await context.close(); }
+});
+
+test('scrolling and page scripts cannot create automation alerts or policy actions, while real WebDriver evidence still does', async ({}, testInfo) => {
+  const { context, options } = await openExtension();
+  try {
+    // Isolate nonpositive observations from this test harness's own CDP/WebDriver.
+    // Events/collectors/worker/UI are real Chromium; this is not proof of human input.
+    const worker = context.serviceWorkers()[0]!;
+    await worker.evaluate(() => {
+      const getTargets = chrome.debugger.getTargets.bind(chrome.debugger);
+      chrome.debugger.getTargets = async () => (await getTargets()).map(target => ({ ...target, attached: false }));
+    });
+    const sites: Page[] = [];
+    for (const path of ['activity-source', 'notification-host']) {
+      const page = await context.newPage();
+      await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { value: false, configurable: true }));
+      await page.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html',
+        body: '<!doctype html><style>body{height:20000px}button{position:fixed;top:20px}</style><button>Page action</button>',
+      }));
+      await page.goto(`http://127.0.0.1/${path}`);
+      sites.push(page);
+    }
+    const [source, host] = sites as [Page, Page];
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url?.startsWith('http://127.0.0.1/activity-source'))!.id!);
+    await source.evaluate(() => { location.hash = 'initialize-coverage'; });
+    await recordedTab(options, tabId, tab => tab.status === 'NO_AUTOMATION_OBSERVED');
+    const initial = await send(options, { type: 'GET_DASHBOARD' });
+    await send(options, { type: 'SAVE_CONFIG', config: { ...initial.config.values, policyMode: 'block', sensitiveDomains: ['127.0.0.1'], minimumConfidence: 0.1 } });
+    await source.bringToFront();
+    await recordedTab(options, tabId, tab => tab.status === 'NO_AUTOMATION_OBSERVED' && tab.coverage.find(item => item.detector === 'behavior')?.availability === 'available');
+    await source.evaluate(async () => {
+      for (let step = 0; step < 24; step++) { scrollBy(0, 12); await new Promise(requestAnimationFrame); }
+      for (let step = 0; step < 8; step++) document.querySelector('button')!.click();
+    });
+    const sample = await worker.evaluate(async id => {
+      const results = await chrome.scripting.executeScript({ target: { tabId: id }, world: 'ISOLATED', func: () => {
+        const state = (globalThis as typeof globalThis & { __agentguardBehaviorCollectorV1__?: { samples: { trusted: boolean }[] } }).__agentguardBehaviorCollectorV1__;
+        return { trusted: state?.samples.filter(sample => sample.trusted).length ?? 0, synthetic: state?.samples.filter(sample => !sample.trusted).length ?? 0 };
+      } });
+      return results[0]!.result!;
+    }, tabId);
+    expect(sample.trusted).toBeGreaterThanOrEqual(12);
+    expect(sample.synthetic).toBeGreaterThanOrEqual(8);
+    const before = (await recordedTab(options, tabId)).assessedAt;
+    await source.evaluate(() => { location.hash = `after-activity-${Date.now()}`; });
+    const negative = await recordedTab(options, tabId, tab => tab.assessedAt > before);
+    expect(negative.status).toBe('NO_AUTOMATION_OBSERVED');
+    expect(negative.confidence).toBe(0);
+    expect(negative.evidence.some(item => item.metadata.signal === 'automation-indicator')).toBe(false);
+    expect(negative.policy.action).toBe('none');
+    await expect(source.locator('[data-agentguard-alert]')).toHaveCount(0);
+    await host.bringToFront();
+    await expect(host.locator('[data-agentguard-alert]')).toHaveCount(0);
+    const normal = await send(options, { type: 'GET_DASHBOARD' });
+    expect(normal.quarantines).toEqual([]);
+    expect(normal.sessions).toEqual([]);
+    expect(normal.statistics?.sessionsObserved).toBe(0);
+    expect(normal.audit.some(event => ['policy_triggered', 'quarantined', 'enforcement_failed'].includes(event.eventType))).toBe(false);
+    expect(normal.healthErrors).toEqual([]);
+    expect(await options.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('');
+    const popupOpened = context.waitForEvent('page');
+    await options.evaluate(url => chrome.tabs.create({ url, active: false }), options.url().replace('options.html', 'popup.html'));
+    const popup = await popupOpened;
+    await popup.setViewportSize({ width: 400, height: 600 });
+    await expect(popup.getByRole('heading', { name: 'No automation observed' })).toBeVisible();
+    await expect(popup.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-128.png');
+    await popup.screenshot({ path: testInfo.outputPath('normal-activity-popup.png') });
+
+    // Remove only the fixture's flag override: restore Chromium's actual WebDriver value.
+    await send(options, { type: 'SAVE_CONFIG', config: { ...normal.config.values, policyMode: 'monitor' } });
+    await source.evaluate(() => { Reflect.deleteProperty(navigator, 'webdriver'); location.hash = 'webdriver-restored'; });
+    expect(await source.evaluate(() => navigator.webdriver)).toBe(true);
+    const positive = await recordedTab(options, tabId, tab => tab.status === 'AUTOMATION_LIKELY');
+    expect(positive.confidence).toBe(0.82);
+    expect(positive.identifiedAgent).toBeNull();
+    expect(positive.evidence.some(item => item.detector === 'webdriver')).toBe(true);
+    await source.bringToFront();
+    await expect(source.locator('[data-agentguard-alert]')).toHaveCount(1);
+    await host.bringToFront();
+    await expect(host.locator('[data-agentguard-alert]')).toHaveCount(1);
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).sessions.some(session => session.tabId === tabId)).toBe(true);
   } finally { await context.close(); }
 });
 
@@ -681,5 +863,324 @@ test('real session UI retains ended history, exports privacy-safe records and cl
     await expect(options.getByText('Ended session history cleared. Current sessions are unchanged.', { exact: true })).toBeVisible();
     expect(await send(options, { type: 'GET_SESSION_HISTORY' })).toEqual([]);
     expect((await send(options, { type: 'EXPORT_SESSIONS' })).history).toEqual([]);
+  } finally { await context.close(); }
+});
+
+test('activity samples and per-session reports are real, deduplicated and privacy-minimized', async () => {
+  const { context, options } = await openExtension();
+  try {
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Activity fixture</h1><input aria-label="Private field" type="password"><button>Continue</button>' }));
+    await site.goto('http://127.0.0.1/PRIVATE_REPORT_PATH?token=PRIVATE_REPORT_TOKEN');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url?.includes('PRIVATE_REPORT_PATH'))?.id);
+    await recordedTab(options, tabId!, tab => tab.status === 'AUTOMATION_LIKELY');
+    await site.getByLabel('Private field').pressSequentially('PRIVATE_REPORT_PASSWORD');
+    await site.getByRole('button', { name: 'Continue' }).click();
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).sessions.find(session => session.tabId === tabId)?.observedActivity.keyboardInteractions ?? 0).toBeGreaterThan(0);
+    const dashboard = await send(options, { type: 'GET_DASHBOARD' });
+    const session = dashboard.sessions.find(item => item.tabId === tabId)!;
+    const report = await send(options, { type: 'GET_SESSION_REPORT', sessionId: session.id });
+    expect(report.activity.keyboardInteractions).toBeGreaterThan(0);
+    expect(report.controller).toBeNull();
+    expect(report.coverageNote).toContain('zero counts do not establish inactivity');
+    await options.bringToFront();
+    await options.getByRole('button', { name: 'Refresh data', exact: true }).click();
+    await options.getByRole('button', { name: 'Sessions', exact: true }).click();
+    const card = options.getByRole('article', { name: `Current session on 127.0.0.1, tab ${tabId}` });
+    await card.getByRole('button', { name: 'View report', exact: true }).click();
+    await expect(card.getByRole('region', { name: 'Session report' })).toBeVisible();
+    await expect(card.getByText(report.coverageNote, { exact: true })).toBeVisible();
+    const stored = await options.evaluate(async () => ({ local: await chrome.storage.local.get(null), session: await chrome.storage.session.get(null) }));
+    expect(JSON.stringify({ stored, report })).not.toContain('PRIVATE_REPORT_');
+    expect((await send(options, { type: 'GET_DASHBOARD' })).sessions.find(item => item.tabId === tabId)?.id).toBe(session.id);
+  } finally { await context.close(); }
+});
+
+test('delegation blocks selected synthetic input, pauses and resumes without disabling detection', async () => {
+  const { context, options } = await openExtension();
+  try {
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Delegation fixture</h1><button>Continue</button>' }));
+    await site.goto('http://127.0.0.1/delegation');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/delegation')?.id);
+    await recordedTab(options, tabId!, tab => tab.status === 'AUTOMATION_LIKELY');
+    await options.getByRole('button', { name: 'Agent controls', exact: true }).click();
+    await options.getByLabel('Controlled tab', { exact: true }).selectOption(String(tabId));
+    await options.getByRole('button', { name: 'Apply delegation', exact: true }).click();
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).controls?.grants.find(grant => grant.tabId === tabId)?.preset).toBe('READ_ONLY');
+    const prevented = () => site.evaluate(() => { const event = new MouseEvent('click', { bubbles: true, cancelable: true }); document.querySelector('button')!.dispatchEvent(event); return event.defaultPrevented; });
+    await expect.poll(prevented).toBe(true);
+    await send(options, { type: 'GRANT_ONCE', tabId: tabId!, capability: 'click' });
+    expect(await prevented()).toBe(false);
+    expect(await prevented()).toBe(true);
+    const pause = await send(options, { type: 'PAUSE_CONTROLS', domain: '127.0.0.1', minutes: 15 });
+    expect(await prevented()).toBe(false);
+    expect((await send(options, { type: 'GET_DASHBOARD' })).config.values.monitoringEnabled).toBe(true);
+    await send(options, { type: 'RESUME_CONTROLS', pauseId: pause.pauses[0]!.id });
+    expect(await prevented()).toBe(true);
+    await send(options, { type: 'REVOKE_DELEGATION', tabId: tabId! });
+    expect(await prevented()).toBe(false);
+  } finally { await context.close(); }
+});
+
+test('emergency containment records actual multi-tab outcomes, survives worker restart and resets explicitly', async () => {
+  const { context, options, extensionId } = await openExtension();
+  try {
+    const sites = await Promise.all([context.newPage(), context.newPage()]);
+    for (let index = 0; index < sites.length; index++) {
+      const site = sites[index]!;
+      await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Emergency fixture</h1>' }));
+      await site.goto(`http://127.0.0.1/emergency-${index}`);
+    }
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).sessions.length).toBe(2);
+    await options.bringToFront();
+    options.once('dialog', dialog => dialog.accept());
+    await options.getByRole('button', { name: 'Contain detected tabs', exact: true }).click();
+    for (const site of sites) await expect(site).toHaveURL(`chrome-extension://${extensionId}/blocked.html`);
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).emergency?.outcomes.filter(item => item.result === 'confirmed').length).toBe(2);
+    const browserSession = await context.browser()!.newBrowserCDPSession();
+    const { targetInfos } = await browserSession.send('Target.getTargets');
+    const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${extensionId}/`))!;
+    await browserSession.send('Target.closeTarget', { targetId: worker.targetId });
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).emergency?.active).toBe(true);
+    expect((await send(options, { type: 'GET_DASHBOARD' })).emergency?.outcomes).toHaveLength(2);
+    await send(options, { type: 'EMERGENCY_RESET' });
+    const dashboard = await send(options, { type: 'GET_DASHBOARD' });
+    expect(dashboard.emergency?.active).toBe(false);
+    expect(dashboard.quarantines).toHaveLength(2);
+    const commands = await options.evaluate(() => chrome.commands.getAll());
+    expect(commands.some(command => command.name === 'emergency-contain')).toBe(true);
+  } finally { await context.close(); }
+});
+
+test('explicit traffic observation records hostname metadata without scoring its own debugger session', async () => {
+  const { context, options, extensionId } = await openExtension();
+  try {
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Traffic fixture</h1>' }));
+    await site.goto('http://127.0.0.1/traffic');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/traffic')?.id);
+    await recordedTab(options, tabId!);
+    const view = await send(options, { type: 'START_OBSERVATION', tabId: tabId! });
+    expect(view.leases.find(lease => lease.tabId === tabId)?.state).toBe('observing');
+    await site.evaluate(() => fetch('/PRIVATE_TRAFFIC?token=PRIVATE_TOKEN', { method: 'POST', headers: { 'X-Fixture': 'PRIVATE_HEADER' }, body: 'PRIVATE_BODY' }).then(response => response.text()));
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).traffic?.records.filter(record => record.tabId === tabId && record.kind === 'request').length ?? 0).toBeGreaterThan(0);
+    const dashboard = await send(options, { type: 'GET_DASHBOARD' });
+    expect(JSON.stringify(dashboard.traffic)).not.toContain('PRIVATE_');
+    await recordedTab(options, tabId!, tab => tab.coverage.some(item => item.detector === 'debugger' && item.availability === 'unavailable'));
+    expect((await send(options, { type: 'GET_DASHBOARD' })).tabs.find(tab => tab.tabId === tabId)?.evidence.some(item => item.detector === 'debugger')).toBe(false);
+    await send(options, { type: 'STOP_OBSERVATION', tabId: tabId! });
+    expect((await send(options, { type: 'GET_DASHBOARD' })).traffic?.leases).toEqual([]);
+    await send(options, { type: 'START_OBSERVATION', tabId: tabId! });
+    const browserSession = await context.browser()!.newBrowserCDPSession();
+    const { targetInfos } = await browserSession.send('Target.getTargets');
+    const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${extensionId}/`))!;
+    await browserSession.send('Target.closeTarget', { targetId: worker.targetId });
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).traffic?.leases).toEqual([]);
+    expect(await options.evaluate(async () => (await chrome.storage.session.get('agentguard.observation-owners.v1'))['agentguard.observation-owners.v1'])).toEqual([]);
+  } finally { await context.close(); }
+});
+
+test('opt-in stack hints recognize real Playwright calls without changing controller identity', async () => {
+  const { context, options } = await openExtension();
+  try {
+    const config = (await send(options, { type: 'GET_DASHBOARD' })).config.values;
+    await send(options, { type: 'SAVE_CONFIG', config: { ...config, stackSignalsEnabled: true } });
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Stack fixture</h1>' }));
+    await site.goto('http://127.0.0.1/stack');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/stack')?.id);
+    await recordedTab(options, tabId!);
+    await site.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<span>Fixture action</span>'));
+    await options.bringToFront(); await site.bringToFront();
+    const tab = await recordedTab(options, tabId!, tab => tab.evidence.some(item => item.metadata.marker === 'playwright-stack'));
+    expect(tab.identifiedAgent).toBeNull();
+    expect(tab.frameworkHints).toContain('Playwright-like call stack');
+    expect((await send(options, { type: 'GET_DASHBOARD' })).sessions.find(session => session.tabId === tabId)?.controller.product).toBeNull();
+  } finally { await context.close(); }
+});
+
+test('explicit global download cancellation confirms Chrome outcomes without guessing an agent tab', async ({}, testInfo) => {
+  const fixture = testInfo.outputPath('download-permission-extension');
+  await cp(resolve('dist'), fixture, { recursive: true });
+  const manifest = JSON.parse(await readFile(resolve(fixture, 'manifest.json'), 'utf8')) as chrome.runtime.ManifestV3;
+  manifest.permissions = [...(manifest.permissions ?? []), 'downloads'];
+  manifest.optional_permissions = manifest.optional_permissions?.filter(permission => permission !== 'downloads');
+  await writeFile(resolve(fixture, 'manifest.json'), JSON.stringify(manifest));
+  const server = createServer((_, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="PRIVATE_FILENAME.txt"', 'Content-Length': '1000000' });
+    response.write('fixture');
+    const timer = setInterval(() => response.write('fixture'), 100);
+    response.on('close', () => clearInterval(timer));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('Download fixture did not start');
+  const { context, options } = await openExtension(fixture);
+  try {
+    const config = (await send(options, { type: 'GET_DASHBOARD' })).config.values;
+    await send(options, { type: 'SAVE_CONFIG', config: { ...config, downloadPolicy: 'block_all' } });
+    const id = await options.evaluate(port => chrome.downloads.download({ url: `http://127.0.0.1:${port}/PRIVATE_DOWNLOAD?token=PRIVATE_TOKEN`, saveAs: false }), address.port);
+    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).downloads?.find(record => record.id === id)?.action).toBe('cancel_confirmed');
+    const records = (await send(options, { type: 'GET_DASHBOARD' })).downloads!;
+    expect(records.find(record => record.id === id)).toMatchObject({ domain: '127.0.0.1', tabId: null, initiator: 'unknown' });
+    expect(JSON.stringify(records)).not.toContain('PRIVATE_');
+    const items = await options.evaluate(id => chrome.downloads.search({ id }), id);
+    expect(items[0]?.state).toBe('interrupted');
+    expect(items[0]?.error).toBe('USER_CANCELED');
+    await send(options, { type: 'CLEAR_TRAFFIC' });
+    expect((await send(options, { type: 'GET_DASHBOARD' })).downloads).toEqual([]);
+  } finally { await context.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('dark UI stays readable, aligned and keyboard-accessible across desktop, narrow settings and popup layouts', async ({}, testInfo) => {
+  const { context, options, extensionId } = await openExtension();
+  const noOverflow = async (page: Page) => {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const clipped = await page.locator('.panel, .console-panel, .metric-card, .field input, .field select, .field textarea').evaluateAll(elements => elements.filter(element => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1);
+    }).map(element => element.className));
+    expect(clipped).toEqual([]);
+  };
+  try {
+    await options.emulateMedia({ reducedMotion: 'reduce' });
+    const site = await context.newPage();
+    await site.route('http://127.0.0.1/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><h1>Layout fixture</h1>' }));
+    await site.goto('http://127.0.0.1/layout');
+    const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/layout')!.id!);
+    await recordedTab(options, tabId);
+
+    for (const width of [1440, 800, 390]) {
+      await options.setViewportSize({ width, height: 1000 });
+      for (const label of ['Overview', 'Sessions', 'Agent controls', 'Traffic & alerts', 'External services', 'Policy settings', 'Coverage & permissions', 'Audit log']) {
+        const button = options.getByRole('button', { name: label, exact: true });
+        await button.click();
+        await expect(button).toHaveAttribute('aria-current', 'page');
+        await expect(options.getByRole('button', { name: 'Refresh data', exact: true })).toBeEnabled();
+        await noOverflow(options);
+      }
+      if (width !== 800) {
+        await options.getByRole('button', { name: 'Overview', exact: true }).click();
+        if (width === 390) expect(await options.locator('.table-scroll').evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+        await options.screenshot({ path: testInfo.outputPath(`overview-${width}.png`), fullPage: true });
+        await options.getByRole('button', { name: 'Policy settings', exact: true }).click();
+        await options.screenshot({ path: testInfo.outputPath(`policy-${width}.png`), fullPage: true });
+      }
+    }
+    await options.setViewportSize({ width: 1440, height: 1000 });
+    await options.getByRole('button', { name: 'Overview', exact: true }).focus();
+    await options.keyboard.press('Tab');
+    await expect(options.getByRole('button', { name: 'Sessions', exact: true })).toBeFocused();
+    await expect(options.getByRole('button', { name: 'Sessions', exact: true })).toHaveCSS('outline-style', 'solid');
+    expect(await options.evaluate(() => getComputedStyle(document.documentElement).colorScheme)).toBe('dark');
+    const contrast = await options.evaluate(() => {
+      const token = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      const luminance = (hex: string) => {
+        const rgb = hex.slice(1).match(/.{2}/gu)!.map(channel => {
+          const value = parseInt(channel, 16) / 255;
+          return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+        });
+        return rgb[0]! * .2126 + rgb[1]! * .7152 + rgb[2]! * .0722;
+      };
+      const background = luminance(token('--surface'));
+      return ['--text', '--muted', '--subtle', '--accent', '--danger', '--warning'].map(name => {
+        const foreground = luminance(token(name));
+        return (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05);
+      });
+    });
+    for (const ratio of contrast) expect(ratio).toBeGreaterThanOrEqual(4.5);
+    await expect(options.getByRole('button', { name: 'Sessions', exact: true })).toHaveCSS('transition-duration', '0s');
+
+    await site.bringToFront();
+    const opened = context.waitForEvent('page');
+    await options.evaluate(url => chrome.tabs.create({ url, active: false }), `chrome-extension://${extensionId}/popup.html`);
+    const popup = await opened;
+    await popup.setViewportSize({ width: 400, height: 600 });
+    await expect(popup.getByRole('heading', { name: 'Automation likely' })).toBeVisible();
+    await noOverflow(popup);
+    const current = await popup.getByRole('region', { name: 'Current tab assessment' }).boundingBox();
+    const controls = await popup.getByRole('region', { name: 'Tab controls' }).boundingBox();
+    const browser = await popup.getByRole('region', { name: 'Browser-wide summary' }).boundingBox();
+    expect(current!.y).toBeLessThan(controls!.y);
+    expect(controls!.y).toBeLessThan(browser!.y);
+    expect(controls!.y + controls!.height).toBeLessThanOrEqual(600);
+    await popup.screenshot({ path: testInfo.outputPath('popup-dark.png') });
+
+    await send(options, { type: 'QUARANTINE_TAB', tabId });
+    await expect(site.getByRole('heading', { name: 'This tab is quarantined' })).toBeVisible();
+    for (const width of [1440, 390]) {
+      await site.setViewportSize({ width, height: 1000 });
+      await noOverflow(site);
+      const release = site.getByRole('button', { name: 'Release this tab' });
+      await expect(release).toBeInViewport();
+      await site.screenshot({ path: testInfo.outputPath(`containment-${width}.png`), fullPage: true });
+    }
+  } finally { await context.close(); }
+});
+
+test('native toolbar popup keeps its 400px width and scrolls vertically on first open and reopen', async ({}, testInfo) => {
+  const { context, options, extensionId } = await openExtension();
+  try {
+    const browser = await context.browser()!.newBrowserCDPSession();
+    const inspectedTargets = new Set<string>();
+    for (let opening = 0; opening < 2; opening++) {
+      await options.bringToFront();
+      await options.evaluate(() => chrome.action.openPopup());
+      const { targetInfos } = await browser.send('Target.getTargets');
+      const target = targetInfos.find(item => item.url === `chrome-extension://${extensionId}/popup.html`);
+      expect(target, 'Chrome must open the actual action popup, not a substitute tab').toBeDefined();
+      expect(inspectedTargets.has(target!.targetId), 'Reopen must inspect a new native popup target').toBe(false);
+      inspectedTargets.add(target!.targetId);
+      const { sessionId } = await browser.send('Target.attachToTarget', { targetId: target!.targetId, flatten: false });
+      let sequence = 0;
+      // Action popups are not Playwright Pages. Inspect the native target through
+      // CDP without device emulation, viewport overrides or production permission changes.
+      const command = <T,>(method: string, params: Record<string, unknown> = {}): Promise<T> => new Promise((resolve, reject) => {
+        const id = ++sequence;
+        const cleanup = () => { clearTimeout(timer); browser.off('Target.receivedMessageFromTarget', receive); };
+        const receive = (event: { sessionId: string; message: string }) => {
+          if (event.sessionId !== sessionId) return;
+          const response = JSON.parse(event.message) as { id?: number; result: T; error?: { message: string } };
+          if (response.id !== id) return;
+          cleanup();
+          if (response.error) reject(new Error(response.error.message));
+          else resolve(response.result);
+        };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('Native popup inspection timed out')); }, 5000);
+        browser.on('Target.receivedMessageFromTarget', receive);
+        void browser.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method, params }) }).catch(error => { cleanup(); reject(error); });
+      });
+      const evaluate = async <T,>(expression: string) => (await command<{ result: { value: T } }>('Runtime.evaluate', { expression, returnByValue: true })).result.value;
+      await expect.poll(() => evaluate<boolean>('Boolean(document.querySelector(".popup-footer"))')).toBe(true);
+      // Native popup geometry/paint can settle after React has mounted, especially
+      // on reopen. Wait for real frames, not a forced viewport or an arbitrary sleep.
+      await expect.poll(() => evaluate<boolean>('innerHeight >= 480')).toBe(true);
+      await command('Runtime.evaluate', { expression: 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))', awaitPromise: true });
+      const screenshot = await command<{ data: string }>('Page.captureScreenshot', { captureBeyondViewport: false });
+      await writeFile(testInfo.outputPath(`native-popup-${opening}.png`), Buffer.from(screenshot.data, 'base64'));
+      const size = await evaluate<{ viewport: number; shell: number; height: number; horizontalOverflow: boolean; canScroll: boolean; headerFits: boolean }>(`(() => {
+        const shell = document.querySelector('.popup-shell').getBoundingClientRect();
+        const brand = document.querySelector('.popup-header .brand').getBoundingClientRect();
+        const settings = document.querySelector('.popup-header button').getBoundingClientRect();
+        return { viewport: innerWidth, shell: shell.width, height: innerHeight,
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+          canScroll: document.documentElement.scrollHeight > innerHeight,
+          headerFits: settings.left > brand.right && settings.right <= innerWidth };
+      })()`);
+      expect(size.viewport).toBe(400);
+      expect(size.shell).toBe(400);
+      expect(size.height).toBeGreaterThanOrEqual(480);
+      expect(size.height).toBeLessThanOrEqual(600);
+      expect(size.horizontalOverflow).toBe(false);
+      expect(size.canScroll).toBe(true);
+      expect(size.headerFits).toBe(true);
+      const scrolled = await evaluate<boolean>(`(() => {
+        window.scrollTo(0, document.documentElement.scrollHeight);
+        return window.scrollY > 0 && document.querySelector('.popup-footer').getBoundingClientRect().bottom <= innerHeight + 1;
+      })()`);
+      expect(scrolled).toBe(true);
+      await browser.send('Target.closeTarget', { targetId: target!.targetId });
+      await expect.poll(async () => (await browser.send('Target.getTargets')).targetInfos.some(item => item.targetId === target!.targetId)).toBe(false);
+    }
   } finally { await context.close(); }
 });

@@ -39,6 +39,31 @@ function memory(session: unknown = undefined, history: unknown = undefined) {
 const envelope = (sessions: AgentSession[]): AgentSessionData => ({ schemaVersion: 1, sessions });
 
 describe('AgentSessionStore lifecycle', () => {
+  it('rejects behavioral-only live positive observations without recording a session', async () => {
+    const { port } = memory();
+    const store = new AgentSessionStore(port, { now: () => START });
+    await expect(store.observe(observation(1, START, { controlState: 'AUTOMATION_SUSPECTED', controlScore: 0.18,
+      evidenceIds: ['behavior:regular-timing', 'behavior:synthetic-interactions'],
+    }))).rejects.toThrow('Invalid intelligence observation');
+    expect(store.snapshot(START)).toEqual([]);
+    expect(port.writeSession).not.toHaveBeenCalled();
+  });
+
+  it('retires restored behavioral-only active sessions but preserves historical records and genuine active sessions', async () => {
+    const legacy = { ...saved(), controlState: 'AUTOMATION_SUSPECTED' as const, controlScore: 0.18,
+      evidenceIds: ['behavior:regular-timing'], automationStack: { transports: [], frameworks: [], environmentHints: [], controllerCandidates: [] } };
+    const genuine = saved(2);
+    const { port } = memory(envelope([legacy, genuine]));
+    const store = new AgentSessionStore(port, { now: () => START + 1 });
+    await store.load(new Set([1, 2]));
+    expect(store.snapshot(START + 1).map(item => item.id)).toEqual([genuine.id]);
+    expect(store.history()).toContainEqual(expect.objectContaining({ id: legacy.id, active: false, endReason: 'no_evidence' }));
+    const restored = new AgentSessionStore(port, { now: () => START + 2 });
+    await restored.load(new Set([1, 2]));
+    expect(restored.snapshot(START + 2).map(item => item.id)).toEqual([genuine.id]);
+    expect(restored.history().filter(item => item.id === legacy.id)).toHaveLength(1);
+  });
+
   it('creates a tab-scoped unknown-controller session without retaining mutable caller references', async () => {
     const { port, data } = memory();
     const store = new AgentSessionStore(port, { now: () => START });

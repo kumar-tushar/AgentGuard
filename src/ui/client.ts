@@ -48,3 +48,8 @@ export function timeText(timestamp: number | null): string {
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'An unexpected error occurred.';
 }
+
+/** Older persisted quarantine reasons must follow the current UI terminology. */
+export function userFacingText(text: string): string {
+  return text.replace(/\bemployee\b/giu, word => word[0] === 'E' ? 'User' : 'user');
+}

@@ -4,6 +4,7 @@ import type { Capabilities, DetectionContext, PolicyAction } from '../shared/con
 import { hasAutomation, type ControlState } from '../shared/intelligence';
 import { normalizeRuntime, normalizeBehavior } from '../detection/validation';
 import { FINGERPRINT_PROBES } from '../shared/fingerprints';
+import { observationOwners } from './debugger-ownership';
 
 /** Own extension tabs can lack tabs.Tab.url without the broad tabs permission. */
 export async function readTab(tabId: number): Promise<{ url?: string; status?: string }> {
@@ -44,15 +45,20 @@ export interface DebuggerSnapshot {
 }
 
 const DEBUGGER_UNAVAILABLE = 'Reduced coverage: debugger access unavailable; Chrome or organization policy may restrict it, or inspection failed.';
-let targetsCache: { at: number; promise: Promise<DebuggerSnapshot> } | undefined;
+let targetsCache: { at: number; epoch: number; promise: Promise<DebuggerSnapshot> } | undefined;
 
 /** One privacy-filtered browser-wide capture may be shared across an entire reconciliation. */
 export function captureDebuggerSnapshot(force = false): Promise<DebuggerSnapshot> {
   const capturedAt = Date.now();
-  if (force || !targetsCache || capturedAt - targetsCache.at > 2000) {
+  const epoch = observationOwners.epoch;
+  // Do not turn AgentGuard's own optional debugging session into an agent signal.
+  // Conservatively suspend passive inventory while ownership cannot be separated.
+  if (observationOwners.size) return Promise.resolve({ capturedAt, targets: [], available: false, reason: 'Passive attachment coverage is suspended while AgentGuard owns an observation debugger session.' });
+  if (force || !targetsCache || targetsCache.epoch !== epoch || capturedAt - targetsCache.at > 2000) {
     const promise = (async (): Promise<DebuggerSnapshot> => {
       try {
         const raw: unknown = await within(chrome.debugger.getTargets());
+        if (observationOwners.size || observationOwners.epoch !== epoch) throw new Error('Observation ownership changed');
         if (!Array.isArray(raw)) throw new Error('Malformed debugger target list');
         const targets = raw.map((target: unknown) => {
           if (!target || typeof target !== 'object') throw new Error('Malformed debugger target');
@@ -72,12 +78,13 @@ export function captureDebuggerSnapshot(force = false): Promise<DebuggerSnapshot
         return { capturedAt, targets: [], available: false, reason: DEBUGGER_UNAVAILABLE };
       }
     })();
-    targetsCache = { at: capturedAt, promise };
+    targetsCache = { at: capturedAt, epoch, promise };
   }
   return targetsCache.promise;
 }
 
 async function debuggerState(tabId: number, snapshot?: DebuggerSnapshot): Promise<Pick<DetectionContext, 'debuggerAttached' | 'debuggerReason'>> {
+  if (observationOwners.size) return { debuggerAttached: null, debuggerReason: 'AgentGuard owns an observation debugger session; external attachment coverage is unavailable.' };
   const current = snapshot ?? await captureDebuggerSnapshot();
   if (!current.available) return { debuggerAttached: null, debuggerReason: current.reason };
   const target = current.targets.find((item) => item.type === 'page' && item.tabId === tabId);
@@ -86,9 +93,9 @@ async function debuggerState(tabId: number, snapshot?: DebuggerSnapshot): Promis
     : { debuggerAttached: null, debuggerReason: 'No inspectable page target was returned.' };
 }
 
-export async function observe(tabId: number, behaviorEnabled: boolean, now: number, debuggerSnapshot?: DebuggerSnapshot): Promise<DetectionContext> {
+export async function observe(tabId: number, behaviorEnabled: boolean, now: number, debuggerSnapshot?: DebuggerSnapshot, stackSignalsEnabled = false): Promise<DetectionContext> {
   const [runtime, behavior, debuggerResult] = await Promise.allSettled([
-    within(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: collectRuntime, args: [FINGERPRINT_PROBES] })),
+    within(chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: collectRuntime, args: [FINGERPRINT_PROBES, stackSignalsEnabled] })),
     within(chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: collectBehavior, args: [behaviorEnabled, now] })),
     debuggerState(tabId, debuggerSnapshot),
   ]);
