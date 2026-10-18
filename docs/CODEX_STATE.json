@@ -3,12 +3,12 @@
   "phase": 6,
   "phaseName": "Local competitor-parity expansion",
   "status": "in_progress",
-  "lastCompletedMilestone": "Native popup test uses headed Chromium without emulation and Linux CI uses Xvfb with failure diagnostics; strict TypeScript, 492 unit/integration tests, 21 Playwright cases and 23-file ZIP verified locally on macOS",
-  "currentTask": "CI test-harness changes locally verified and packaged; original Ubuntu 490px geometry failure still requires a CI rerun",
-  "nextTask": "Rerun Ubuntu CI to verify the native popup change; broader boundary telemetry, attribution, deployment matrix and authenticated fleet backend remain separate unfinished work",
+  "lastCompletedMilestone": "Node 24.22.0 LTS pin/Node-24 actions and bounded 400px popup-shell scrolling verified: 492 unit/integration tests, 22 browser cases, nine focused repetitions and 23-file ZIP pass on macOS",
+  "currentTask": "Node LTS migration, scrollbar layout fix and foreground release fixtures locally verified and packaged; Ubuntu CI rerun remains required",
+  "nextTask": "Rerun Ubuntu CI; if release still times out inspect its named steps and diagnostic artifact. Separate source-map-js dev advisory and broader product roadmap remain outside this scoped change",
   "filesInProgress": [],
-  "tests": { "typecheck": "pass", "unit": "492_pass_31files", "build": "single_dist_pass", "e2e": "21_pass_1.6m_macos", "nativePopup": "3_headed_repetitions_pass_27.5s_macos", "ubuntuCI": "rerun_required_not_verified_locally", "package": "single_zip_pass_2026-10-19_23_files_byte_match_sha256_ddcc131d80e684ab9160ea2ed29d34073ab198cda35a454dc1fe2f9b3e4f2f53" },
-  "knownIssues": ["Original Ubuntu native popup failure is not locally reproduced; headed/Xvfb CI changes need a Linux rerun", "Boundary-violation telemetry, stronger attribution and real-tool/native/managed/provider matrix remain incomplete; no full-product certification", "All SECURITY changes explicitly approved and applied; root-only policy scope verified", "Git baseline is 993d620; preserve user work", "Use explicit current repo workdir and Node 24 PATH"],
+  "tests": { "node": "24.22.0_LTS_official_checksum_verified", "install": "npm_ci_pass", "typecheck": "pass", "unit": "492_pass_31files", "build": "single_dist_pass", "e2e": "22_pass_1.7m_macos", "focused": "release_and_system_classic_native_popup_9_pass_44.6s_macos", "ubuntuCI": "rerun_required_not_verified_locally", "audit": "1_high_existing_dev_source-map-js_1.2.1_GHSA-68fv-2mgg-jv7q_not_changed", "package": "single_zip_pass_2026-10-19_23_files_byte_match_sha256_69c73e9593288ce834c57d185155d3a2fba7bb284a7e3c3cae550d29aaf22e05" },
+  "knownIssues": ["Ubuntu CI still needs a rerun; classic-scrollbar clipping reproduced/fixed locally, release timeout not reproduced (three unchanged baseline runs pass)", "npm audit reports existing high-severity dev-only source-map-js@1.2.1 advisory; dependency versions were not changed in this scope", "Boundary-violation telemetry, stronger attribution and real-tool/native/managed/provider matrix remain incomplete; no full-product certification", "All SECURITY changes explicitly approved and applied; no SECURITY.md edits for this UI/toolchain change", "Git baseline is b8d67b5; preserve user work", "Use explicit current repo workdir and Node 24.22.0 PATH or .nvmrc"],
   "requirementsFile": "docs/PRODUCT_REQUIREMENTS.md",
   "updatedAt": "2026-10-19"
 }

@@ -120,7 +120,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 /* Chrome auto-sizes action popups from their document. A viewport-based cap here
    feeds the initial narrow viewport back into sizing and prevents expansion. */
 body.popup-document { width: 400px; min-width: 400px; }
-.popup-shell { width: 100%; min-height: 480px; background: var(--bg); }
+/* A document scrollbar can enlarge Chrome's native popup or clip its content.
+   Keep scrolling inside the fixed-width shell, including with classic scrollbars. */
+.popup-shell { width: 100%; min-height: 480px; max-height: 600px; overflow-y: auto; background: var(--bg); }
 .popup-header {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between;
   gap: var(--space-4); border-bottom: 1px solid var(--border); padding: var(--space-4) var(--space-5);

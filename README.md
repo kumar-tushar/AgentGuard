@@ -6,7 +6,7 @@ AgentGuard cannot reliably identify an arbitrary AI product. It answers with obs
 
 ## Install locally
 
-Requires Node.js 24.18 (pinned in `.nvmrc`), npm and Chrome 120+. The dependency set also supports Node 22.22.2+ and 26+. Node 20 cannot run the DOM test environment.
+Requires Node.js **24 LTS** (24.22.0 pinned in `.nvmrc`), npm and Chrome 120+. With nvm, run `nvm install && nvm use` before installing dependencies. CI reads the same version file; project engines accept Node 24 only. The checkout, setup-node and artifact actions also run on Node 24 rather than the deprecated Node 20 action runtime.
 
 ```sh
 npm ci
@@ -38,7 +38,7 @@ The toolbar shows only a **green or red Orbit Pointer icon** (an open circular o
 
 The same packaged Orbit Pointer logo appears in Chrome's extension listing, the popup, settings and containment headers and extension-page favicons. Popup branding follows the current tab's automation/warning/containment state; containment branding turns red only when its quarantine record is confirmed. Settings use the green brand logo. Matching 16/32/48/128-pixel assets maximize the available icon canvas; Chrome controls the toolbar's display size.
 
-The interface uses consistent dark surfaces, mint controls, amber uncertainty and red risk accents. The popup leads with the current tab and its controls; supporting evidence and browser-wide totals follow. Settings, reports, forms and tables share responsive spacing and visible keyboard focus. In-page notices use the same palette. These presentation changes do not change confidence, identity claims, policy or consent.
+The interface uses consistent dark surfaces, mint controls, amber uncertainty and red risk accents. The popup leads with the current tab and its controls; supporting evidence and browser-wide totals follow. Its 400px shell scrolls internally up to 600px tall, keeping system scrollbars inside the popup width. Settings, reports, forms and tables share responsive spacing and visible keyboard focus. In-page notices use the same palette. These presentation changes do not change confidence, identity claims, policy or consent.
 
 Small top-right notifications stack vertically on the active accessible web tab in each window, even when AgentGuard is unpinned. Each card identifies an automated tab by hostname and tab ID, with its qualified state and evidence score—not verified controller identity. **Click a card to switch to that existing tab and hide its notifications for 24 hours** (keyboard: focus it and press Enter/Space). The mute applies to that source tab across all stacks; other cards remain. It survives reloads, same-tab navigation and background-worker restarts; closing/replacing the source tab or restarting the browser ends it. Detection, audit and policy enforcement continue. If switching or saving fails, no successful mute is claimed; the tab may already have switched when saving fails. Restricted pages or withheld access can prevent notifications, and hostile pages can hide or spoof them. Use the extension's popup for authoritative stored evidence.
 

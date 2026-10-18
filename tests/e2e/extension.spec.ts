@@ -287,15 +287,20 @@ test('release returns the original page after reload and worker restart, with tr
     await send(options, { type: 'QUARANTINE_TAB', tabId: tabId! });
     await expect(site.getByText('User requested emergency quarantine.', { exact: true })).toBeVisible();
     await expect(site.getByText('Employee requested emergency quarantine.', { exact: true })).toHaveCount(0);
-    await site.reload();
+    await test.step('Reload the quarantined document', () => site.reload());
     const browserSession = await context.browser()!.newBrowserCDPSession();
     const { targetInfos } = await browserSession.send('Target.getTargets');
     const worker = targetInfos.find(target => target.type === 'service_worker' && target.url.startsWith(`chrome-extension://${extensionId}/`))!;
-    await browserSession.send('Target.closeTarget', { targetId: worker.targetId });
-    await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).quarantines.some(record => record.tabId === tabId)).toBe(true);
-    await site.getByRole('button', { name: 'Release this tab' }).click();
-    await expect(site).toHaveURL(originalUrl);
-    await expect(site.getByRole('heading', { name: 'Original page restored' })).toBeVisible();
+    await test.step('Restart the worker and recover the quarantine record', async () => {
+      await browserSession.send('Target.closeTarget', { targetId: worker.targetId });
+      await expect.poll(async () => (await send(options, { type: 'GET_DASHBOARD' })).quarantines.some(record => record.tabId === tabId)).toBe(true);
+    });
+    await test.step('Release the visible tab and restore its original page', async () => {
+      await site.bringToFront();
+      await site.getByRole('button', { name: 'Release this tab' }).click();
+      await expect(site).toHaveURL(originalUrl);
+      await expect(site.getByRole('heading', { name: 'Original page restored' })).toBeVisible();
+    });
     expect((await send(options, { type: 'GET_DASHBOARD' })).quarantines.some(record => record.tabId === tabId)).toBe(false);
     const stored = await options.evaluate(async () => ({ local: await chrome.storage.local.get(null), session: await chrome.storage.session.get(null) }));
     expect(JSON.stringify(stored)).not.toContain('PRIVATE_RETURN_');
@@ -306,9 +311,12 @@ test('release returns the original page after reload and worker restart, with tr
     await options.evaluate(url => chrome.tabs.create({ url, active: false }), `chrome-extension://${extensionId}/blocked.html`);
     const orphan = await opened;
     await expect(orphan.getByRole('heading', { name: 'Containment not confirmed' })).toBeVisible();
-    await orphan.getByRole('button', { name: 'Return to previous page' }).click();
-    await expect(orphan.getByRole('heading', { name: 'Containment released' })).toBeVisible();
-    await expect(orphan.getByText(/Chrome could not return to the previous page/)).toBeVisible();
+    await test.step('Show the no-history fallback in the visible orphan tab', async () => {
+      await orphan.bringToFront();
+      await orphan.getByRole('button', { name: 'Return to previous page' }).click();
+      await expect(orphan.getByRole('heading', { name: 'Containment released' })).toBeVisible();
+      await expect(orphan.getByText(/Chrome could not return to the previous page/)).toBeVisible();
+    });
     await expect(orphan.locator('.brand-mark')).toHaveAttribute('src', './icons/icon-128.png');
     await expect(orphan.locator('link[rel="icon"]')).toHaveAttribute('href', './icons/icon-32.png');
     await expect(orphan.getByRole('button', { name: 'Return to previous page' })).toBeVisible();
@@ -1051,6 +1059,7 @@ test('dark UI stays readable, aligned and keyboard-accessible across desktop, na
     const tabId = await options.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url === 'http://127.0.0.1/layout')!.id!);
     await recordedTab(options, tabId);
 
+    await options.bringToFront();
     for (const width of [1440, 800, 390]) {
       await options.setViewportSize({ width, height: 1000 });
       for (const label of ['Overview', 'Sessions', 'Agent controls', 'Traffic & alerts', 'External services', 'Policy settings', 'Coverage & permissions', 'Audit log']) {
@@ -1119,10 +1128,19 @@ test('dark UI stays readable, aligned and keyboard-accessible across desktop, na
   } finally { await context.close(); }
 });
 
-test('native toolbar popup keeps its 400px width and scrolls vertically on first open and reopen', async ({}, testInfo) => {
+for (const scrollbars of ['system', 'classic'] as const) test(`native toolbar popup keeps its 400px width and scrolls vertically on first open and reopen (${scrollbars} scrollbars)`, async ({}, testInfo) => {
   // Native browser-chrome geometry needs a real display, not the headless window
   // implementation. Linux CI supplies Xvfb; do not emulate this popup's viewport.
-  const { context, options, extensionId } = await openExtension(resolve('dist'), '', 'headed');
+  let path = resolve('dist');
+  if (scrollbars === 'classic') {
+    // Set the real scrollbar style before Chrome's first native auto-size, not
+    // after layout. All executables in this disposable fixture remain unchanged.
+    path = testInfo.outputPath('classic-scrollbar-extension');
+    await cp(resolve('dist'), path, { recursive: true });
+    const popup = resolve(path, 'popup.html');
+    await writeFile(popup, (await readFile(popup, 'utf8')).replace('</head>', '<style>::-webkit-scrollbar { width: 15px; height: 15px; }</style></head>'));
+  }
+  const { context, options, extensionId } = await openExtension(path, '', 'headed');
   try {
     const browser = await context.browser()!.newBrowserCDPSession();
     const inspectedTargets = new Set<string>();
@@ -1159,14 +1177,18 @@ test('native toolbar popup keeps its 400px width and scrolls vertically on first
       // on reopen. Wait for real frames, not a forced viewport or an arbitrary sleep.
       await expect.poll(() => evaluate<boolean>('innerHeight >= 480')).toBe(true);
       await command('Runtime.evaluate', { expression: 'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))', awaitPromise: true });
-      const measure = () => evaluate<{ viewport: number; shell: number; height: number; horizontalOverflow: boolean; canScroll: boolean; headerFits: boolean }>(`(() => {
-        const shell = document.querySelector('.popup-shell').getBoundingClientRect();
+      const measure = () => evaluate<{ viewport: number; contentViewport: number; scrollbar: number; shell: number; height: number; horizontalOverflow: boolean; canScroll: boolean; headerFits: boolean }>(`(() => {
+        const element = document.querySelector('.popup-shell');
+        const shell = element.getBoundingClientRect();
         const brand = document.querySelector('.popup-header .brand').getBoundingClientRect();
         const settings = document.querySelector('.popup-header button').getBoundingClientRect();
-        return { viewport: innerWidth, shell: shell.width, height: innerHeight,
-          horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
-          canScroll: document.documentElement.scrollHeight > innerHeight,
-          headerFits: settings.left > brand.right && settings.right <= innerWidth };
+        return { viewport: innerWidth, contentViewport: document.documentElement.clientWidth,
+          scrollbar: element.offsetWidth - element.clientWidth,
+          shell: shell.width, height: innerHeight,
+          horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth ||
+            element.scrollWidth > element.clientWidth,
+          canScroll: element.scrollHeight > element.clientHeight,
+          headerFits: settings.left > brand.right && settings.right <= shell.left + element.clientWidth };
       })()`);
       try {
         await expect.poll(measure, { message: 'Native popup must finish auto-sizing to 400px' }).toMatchObject({ viewport: 400, shell: 400 });
@@ -1180,15 +1202,18 @@ test('native toolbar popup keeps its 400px width and scrolls vertically on first
       }
       const size = await measure();
       expect(size.viewport).toBe(400);
+      expect(size.contentViewport).toBe(400);
       expect(size.shell).toBe(400);
+      if (scrollbars === 'classic') expect(size.scrollbar).toBe(15);
       expect(size.height).toBeGreaterThanOrEqual(480);
       expect(size.height).toBeLessThanOrEqual(600);
       expect(size.horizontalOverflow).toBe(false);
       expect(size.canScroll).toBe(true);
       expect(size.headerFits).toBe(true);
       const scrolled = await evaluate<boolean>(`(() => {
-        window.scrollTo(0, document.documentElement.scrollHeight);
-        return window.scrollY > 0 && document.querySelector('.popup-footer').getBoundingClientRect().bottom <= innerHeight + 1;
+        const shell = document.querySelector('.popup-shell');
+        shell.scrollTop = shell.scrollHeight;
+        return shell.scrollTop > 0 && document.querySelector('.popup-footer').getBoundingClientRect().bottom <= innerHeight + 1;
       })()`);
       expect(scrolled).toBe(true);
       await browser.send('Target.closeTarget', { targetId: target!.targetId });

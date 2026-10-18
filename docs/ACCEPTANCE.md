@@ -1,5 +1,14 @@
 # Module acceptance and test plan
 
+## Node 24 LTS and cross-platform browser checks (2026-10-19)
+
+- Use official Node 24.22.0 LTS via .nvmrc, CI node-version-file and Node-24-only engine metadata in both manifests. CI action implementations must also use Node 24, not deprecated Node 20. No dependency version churn.
+- Reproduce classic-scrollbar clipping before the fix. Keep the native window/root/shell exactly 400px by placing bounded vertical scrolling inside the popup shell, not the outer document. Cover default and explicit 15px classic scrollbars on first open/reopen, preserving bounds, header fit, no root/shell horizontal overflow and real footer scrolling. No width tolerances or arbitrary extra content width.
+- Foreground actual UI fixtures before interacting; preserve release/reload/worker-restart/no-history/privacy assertions and all timeouts. Name release steps for future CI diagnosis; do not change production navigation speculatively.
+- Run strict TypeScript, full unit/integration and browser suites, focused repeated release/native cases and single ZIP packaging under checksum-verified Node 24.22.0. Distinguish local macOS results from the required Ubuntu rerun.
+
+Verified locally with checksum-verified Node **24.22.0 LTS**: clean `npm ci`, strict TypeScript, **492 unit/integration tests in 31 files**, one build and **all 22 Playwright scenarios (1.7m)** pass via `npm run package`. The strengthened classic-scrollbar fixture failed first at 385px usable width, then passes with exact 400px window/root/shell and an internal 15px gutter after the two-declaration CSS fix. All original width assertions remain; overflow checks are stronger and footer scrolling now targets its real shell. Release plus both native modes passed nine repeated cases (44.6s). Three unchanged baseline release repetitions also passed (18.1s); the original Linux timeout is not locally reproduced. Named steps and foreground fixtures improve its CI diagnosis without changing production navigation or timeouts. **Ubuntu rerun remains required.** CI YAML/runtime metadata and scoped diff checks pass. ZIP integrity passes; all 23 files byte-match dist. Dependency versions remain unchanged; `npm audit` separately reports the existing high-severity source-map-js@1.2.1 development advisory (GHSA-68fv-2mgg-jv7q).
+
 ## Native popup CI environment (2026-10-19)
 
 - Exercise the real first-open/reopened action popup in headed Chromium without viewport emulation; Linux CI supplies a display via Xvfb. Keep the other functional/layout scenarios headless.
